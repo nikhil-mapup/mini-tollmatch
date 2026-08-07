@@ -34,7 +34,6 @@ The current pipeline writes to these MongoDB collections:
 │   └── database/
 │       ├── mongo.py               # MongoDB client wrapper
 │       ├── save.py                # Batch save helper
-│       └── repository.py          # Simple repository wrapper
 ├── requirements.txt               # Python dependencies
 └── .env                           # Local environment config, not committed
 ```
