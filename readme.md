@@ -57,20 +57,13 @@ because the GPS file contains millions of rows.
 
 ## Run locally
 
-### 1. Create and activate a virtual environment
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Install dependencies
+### 1. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure MongoDB
+### 2. Configure MongoDB
 
 Create a `.env` file in the project root:
 
@@ -79,7 +72,7 @@ MONGO_URI=your_mongodb_connection_string
 DATABASE_NAME=tollmatch
 ```
 
-### 4. Run the pipeline
+### 3. Run the pipeline
 
 From the project root:
 
