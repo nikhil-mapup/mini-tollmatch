@@ -1,9 +1,7 @@
 # Data Pipeline Logic
 
-This is my initial approach for now. I'll refine the logic as I get into the implementation if a better solution comes up.
-I have kept the pipeline split into clear stages. Each stage does one job and
-passes its output to the next stage. This makes the logic easier to debug,
-change, and test later.
+Note: This is my initial approach for now. I'll refine the logic as I get into the implementation if a better solution comes up.
+I have kept the pipeline split into clear stages.
 
 ---
 
