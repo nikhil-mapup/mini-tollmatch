@@ -1,0 +1,13 @@
+GPS_RAW_COLLECTION = "gps_raw"
+GPS_VALIDATED_COLLECTION = "gps_validated"
+
+INVOICE_RAW_COLLECTION = "invoice_raw"
+INVOICE_VALIDATED_COLLECTION = "invoice_validated"
+
+QUALITY_COLLECTION = "quality_reports"
+
+TRIPS_COLLECTION = "trips"
+
+SDK_EVENTS_COLLECTION = "sdk_events"
+
+RECONCILIATION_COLLECTION = "reconciliation"
