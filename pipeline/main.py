@@ -1,47 +1,39 @@
-from config.config import DATABASE_NAME, GPS_FILE, INVOICE_FILE
-from config.constants import GPS_RAW, INVOICE_RAW
-
+from config.config import (GPS_FILE,SELECTED_UNITS,WINDOW_START,WINDOW_END)
 from readers.gps_reader import GPSReader
-from readers.invoice_reader import InvoiceReader
-
+from validators.gps_validator import GPSValidator
+from processors.gps_filter import GPSFilter
 from database.mongo import MongoDB
-from database.save import save_to_collection
-
+from database.route_repository import RouteRepository
+from database.gps_gap_repository import GPSGapRepository
+from database.trip_repository import TripRepository
+from database.trip_point_repository import (TripPointRepository)
+from services.route_trip_service import (RouteTripService)
 
 def main():
-    print("Connecting to MongoDB...", flush=True)
+    gps_records = GPSReader(GPS_FILE).read()
+    print(f"Total GPS records: {len(gps_records)}")
+
+    filtered_gps = GPSFilter(units=SELECTED_UNITS, start_time=WINDOW_START, end_time=WINDOW_END).process(gps_records)
+    print(f"Filtered GPS records: {len(filtered_gps)}")
+
+    validation_result = (GPSValidator().validate(filtered_gps))
+
+    valid_gps = (validation_result.valid_records)
+
+    print(f"Valid GPS records: {len(valid_gps)}")
 
     mongo = MongoDB()
 
-    gps_collection = mongo.get_collection(GPS_RAW)
-    invoice_collection = mongo.get_collection(INVOICE_RAW)
+    route_repository = RouteRepository(mongo.get_collection("route_segments"))
+    gap_repository = GPSGapRepository(mongo.get_collection("gps_gap_events"))
+    trip_repository = TripRepository(mongo.get_collection("physical_trips"))
+    trip_point_repository = (TripPointRepository(mongo.get_collection("trip_points")))
 
-    print("Connected to MongoDB", flush=True)
-    print(f"Database: {DATABASE_NAME}", flush=True)
-    print(
-        f"Collections: {gps_collection.name}, {invoice_collection.name}",
-        flush=True,
-    )
-    print("Reading GPS...", flush=True)
+    service = RouteTripService(route_repository=route_repository, gap_repository=gap_repository, trip_repository=trip_repository, trip_point_repository=(trip_point_repository))
 
-    gps_records = GPSReader(GPS_FILE).read()
+    trips = service.process(valid_gps)
 
-    print(f"Loaded {len(gps_records)} GPS records", flush=True)
-
-    save_to_collection(gps_collection, gps_records)
-
-    print("GPS saved to MongoDB", flush=True)
-
-    print("Reading Invoice...", flush=True)
-
-    invoices = InvoiceReader(INVOICE_FILE).read()
-
-    print(f"Loaded {len(invoices)} invoices", flush=True)
-
-    save_to_collection(invoice_collection, invoices)
-
-    print("Invoices saved to MongoDB", flush=True)
-
+    print(f"Physical trips created: {len(trips)}")
 
 if __name__ == "__main__":
     main()
