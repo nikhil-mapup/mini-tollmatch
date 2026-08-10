@@ -17,7 +17,7 @@ class RouteStitcher:
         self.max_gap = timedelta(minutes=max_gap_minutes)
         self.max_distance_km = max_distance_km
 
-    def process(self, unit: int, segments: list[RouteSegment]) -> list[PhysicalTrip]:
+    def process(self, unit: str, segments: list[RouteSegment]) -> list[PhysicalTrip]:
         if not segments:
             return []
 
@@ -46,7 +46,7 @@ class RouteStitcher:
         trips.append(self._create_trip(unit=unit, segments=current_segments))
         return trips
 
-    def _create_trip(self, unit: int, segments: list[RouteSegment]) -> PhysicalTrip:
+    def _create_trip(self, unit: str, segments: list[RouteSegment]) -> PhysicalTrip:
         points = []
         for segment in segments:
             points.extend(segment.gps_points)

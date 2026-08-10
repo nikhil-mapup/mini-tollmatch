@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from config.config import NULL_ISLAND_LAT, NULL_ISLAND_LON
 from models.gps import GPSRecord
 from models.validation import ValidationResult, InvalidRecord
 
@@ -19,6 +20,9 @@ class GPSValidator:
 
             if not (-180 <= record.longitude <= 180):
                 errors.append("INVALID_LONGITUDE")
+
+            if record.latitude == NULL_ISLAND_LAT and record.longitude == NULL_ISLAND_LON:
+                errors.append("NULL_ISLAND_COORDINATES")
 
             if record.unit is None:
                 errors.append("MISSING_UNIT")

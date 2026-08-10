@@ -9,7 +9,7 @@ class PhysicalTrip(BaseModel):
 
     trip_id: str
 
-    unit: int
+    unit: str
 
     start_time: datetime
 

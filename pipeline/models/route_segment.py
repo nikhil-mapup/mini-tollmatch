@@ -9,7 +9,7 @@ class RouteSegment(BaseModel):
 
     route_id: str
 
-    unit: int
+    unit: str
 
     start_time: datetime
 

@@ -10,10 +10,9 @@ class InvoiceRecord(BaseModel):
     post_date: datetime
 
     transaction_id: str
+    tag_no: Optional[str] = None
 
-    tag_no: str
-
-    unit: Optional[str] = None
+    unit: str
 
     cost_center: Optional[str] = None
 
@@ -21,18 +20,18 @@ class InvoiceRecord(BaseModel):
 
     exit_time: Optional[datetime] = None
 
-    toll_loc_name_start: Optional[str]
+    toll_loc_name_start: Optional[str] = None
 
-    entry_plaza: Optional[str]
+    entry_plaza: Optional[str] = None
 
-    toll_loc_name_end: Optional[str]
+    toll_loc_name_end: Optional[str] = None
 
-    exit_plaza: Optional[str]
+    exit_plaza: Optional[str] = None
 
-    toll_class: Optional[str]
+    toll_class: Optional[str] = None
 
-    agency: Optional[str]
+    agency: Optional[str] = None
 
     amount: float
 
-    transactiondesc: Optional[str]
+    transactiondesc: Optional[str] = None

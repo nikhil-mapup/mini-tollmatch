@@ -16,26 +16,69 @@ INVOICE_FILE = DATA_DIR / "FleetA_invoices.csv"
 MONGO_URI = os.getenv("MONGO_URI")
 DATABASE_NAME = os.getenv("DATABASE_NAME", "tollmatch")
 
+# TODO: these three are still placeholders, not yet derived from real data.
+# Before trusting them, run the percentile analysis (sorted GPS timestamp
+# deltas per unit) and replace each with a value backed by that evidence,
+# with a comment citing the percentile that justified it. Do not present
+# these numbers to a reviewer as final until that analysis has been run.
 GPS_GAP_THRESHOLD_MINUTES = 30
-
 ROUTE_STITCH_MAX_GAP_MINUTES = 60
-
 ROUTE_STITCH_MAX_DISTANCE_KM = 5
+
+# A GPS reading sitting exactly on (0, 0) is not a real location — it's the
+# classic "null island" sentinel value for missing/default coordinates.
+# It passes a normal lat/lon range check silently (0 is a valid number),
+# so it needs its own explicit rule rather than relying on the range check.
+NULL_ISLAND_LAT = 0.0
+NULL_ISLAND_LON = 0.0
+
+# --- Vehicle type for the toll SDK ---
+# TODO: this is the single biggest open gap in the pipeline right now.
+# We do not yet have a confirmed mapping from our invoice `toll_class`
+# values to TollGuru's real vehicleType enum, and we do not yet have a
+# vehicles/master-data collection to look up a trip's real class by unit.
+# Until both of those are confirmed, DEFAULT_VEHICLE_TYPE below is used for
+# every SDK call, unconditionally. This means: do not trust any expected
+# toll amount produced right now if it depends on vehicle-class-specific
+# pricing (e.g. express lane truck rates vs. car rates) until this is
+# replaced with a real per-trip lookup.
+TOLL_CLASS_TO_VEHICLE_TYPE = {
+    # "5": "5AxlesTruck",   # <- placeholder, unconfirmed against real API enum
+}
+DEFAULT_VEHICLE_TYPE = "5AxlesTruck"  # explicit placeholder, NOT a silent default
 
 
 # Development / assignment window
-SELECTED_UNITS = ["1951", "1027"]
+# SELECTED_UNITS = None means "run every unit found in the file" — this is
+# the full-dataset mode. Keep a non-empty list here only when deliberately
+# testing against a small, known subset; leave as None for a real run.
+SELECTED_UNITS = None
 
-WINDOW_START = datetime(
-    2025,
-    10,
-    8,
-    tzinfo=timezone.utc,
+# Set either to None to disable date-range scoping entirely (run every
+# record in the file regardless of date). Now actually applied in main.py
+# via processors/date_range_filter.py — previously these two constants
+# were defined but never used anywhere.
+
+WINDOW_START = None
+
+WINDOW_END = None
+
+TOLLMATCH_API_URL = os.getenv(
+    "TOLLMATCH_API_URL"
 )
 
-WINDOW_END = datetime(
-    2025,
-    10,
-    11,
-    tzinfo=timezone.utc,
+TOLLMATCH_API_KEY = os.getenv(
+    "TOLLMATCH_API_KEY"
 )
+
+# --- Step 4: invoice comparison ---
+# Confirmed by reviewer clarification — a toll is only considered matched
+# when BOTH conditions pass. Time alone is not sufficient (a close
+# timestamp at the wrong location is not a match) and distance alone is
+# not sufficient either (the right location at the wrong time is not a
+# match). See services/reconciliation_service.py.
+TOLL_MATCH_TIME_TOLERANCE_MINUTES = 25
+TOLL_MATCH_DISTANCE_KM = 20
+
+AMOUNT_TOLERANCE_USD = 1.00
+DUPLICATE_TIME_WINDOW_MINUTES = 2
