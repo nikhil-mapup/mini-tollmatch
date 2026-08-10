@@ -4,7 +4,7 @@
 
 This document describes the **current data pipeline, how data moves through the system, what each stage produces, why the stages are separated, and the current assumptions/open
 gaps.
-a
+
 The overall goal is to reconstruct vehicle journeys, calculate the tolls
 expected on those journeys, and reconcile those expected toll events
 against actual invoice transactions.
