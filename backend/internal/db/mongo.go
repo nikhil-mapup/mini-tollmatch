@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -30,7 +29,7 @@ func Connect(cfg config.Config) (*Mongo, error) {
 	if err := client.Ping(ctx, nil); err != nil {
 		return nil, err
 	}
-	fmt.Println("Mongodb connected")
+
 	return &Mongo{client: client, dbName: cfg.MongoDB}, nil
 }
 
@@ -49,4 +48,6 @@ const (
 	CollectionMismatches   = "mismatches"
 	CollectionQualityRepts = "quality_reports"
 	CollectionGPSGapEvents = "gps_gap_events"
+	CollectionPhysicalTrip = "physical_trips"
+	CollectionInvoiceRaw   = "invoice_raw"
 )

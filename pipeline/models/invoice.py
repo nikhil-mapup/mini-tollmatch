@@ -12,7 +12,7 @@ class InvoiceRecord(BaseModel):
     transaction_id: str
     tag_no: Optional[str] = None
 
-    unit: str
+    unit: Optional[str] = None
 
     cost_center: Optional[str] = None
 

@@ -36,8 +36,108 @@ export interface TypeCount {
   count: number;
 }
 
+export interface Trip {
+  tripId: string;
+  unit: string;
+  fleetId: string;
+  startTime: string;
+  endTime: string;
+  routeIds: string[];
+  gpsPointCount: number;
+  mismatchCount: number;
+  mismatchTypes: string[];
+}
+
+// Screenshot 1
+export interface OverviewResponse {
+  vehicles: number;
+  tollsPaid: number;
+  tollsExpected: number;
+  tollsOverpaid: number;
+  overpaidPct: number;
+  tollsRefunded: number; // always 0 — no refund/dispute data exists in this pipeline
+}
+
+// Screenshot 2
+export interface CostOverviewResponse {
+  matchAmount: number;
+  matchPct: number;
+  mismatchAmount: number;
+  mismatchPct: number;
+  totalUnits: number;
+  paidTolls: number;
+}
+
+// Screenshot 3
+export interface CostCenterRow {
+  costCenter: string;
+  totalTxns: number;
+  units: number;
+  totalTollsPaid: number;
+  tollsOverpaid: number;
+}
+
+export interface CostOverviewByCostCenterResponse {
+  matchAmount: number;
+  matchPct: number;
+  mismatchAmount: number;
+  mismatchPct: number;
+  rows: CostCenterRow[];
+  totalUnits: number;
+  paidTolls: number;
+}
+
+// Screenshot 4
+export interface InvoiceOverviewResponse {
+  matchCount: number;
+  matchPct: number;
+  mismatchCount: number;
+  mismatchPct: number;
+  totalInvoices: number;
+}
+
+// Screenshot 5 — relabeled "by Mismatch Type" on the frontend too, since
+// there's no invoice-status lifecycle in this data.
+export interface MismatchBreakdownItem {
+  type: string;
+  count: number;
+}
+
+// Screenshot 6
+export interface TopUnitRow {
+  unit: string;
+  tollsPaid: number;
+  tollsMismatch: number;
+}
+
+// Screenshot 7
+export interface InvoiceRow {
+  transactionId: string;
+  unit: string;
+  tollsPaid: number;
+  expected?: number;
+  overpaid?: number;
+  matchType: string;
+  status: string;
+  tripId?: string;
+  tagNo?: string;
+  tollClass?: string;
+  entryPlaza?: string;
+  entryTime: string;
+}
+
+export interface InvoiceListResponse {
+  items: InvoiceRow[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 // The filter shape shared by every fetch call and by FilterBar — one
-// definition, so a new filter field only needs to be added once.
+// definition, so a new filter field only needs to be added once. tab/search
+// are optional and only meaningful on the invoices page, but including them
+// here means withFilters() preserves them automatically on any navigation
+// (e.g. changing the date range) instead of silently dropping them.
 export interface Filters {
   unit?: string;
   type?: string;
@@ -46,4 +146,6 @@ export interface Filters {
   sort?: string;
   order?: string;
   page?: string;
+  tab?: string;
+  search?: string;
 }

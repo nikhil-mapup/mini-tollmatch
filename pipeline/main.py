@@ -36,8 +36,8 @@ from tollmatch.reconciliation_csv_exporter import ReconciliationCSVExporter
 
 
 def main():
-    # run_id = f"{datetime.now(timezone.utc).isoformat()}_{uuid.uuid4().hex[:8]}"
-    # print(f"Run ID: {run_id}")
+    run_id = f"{datetime.now(timezone.utc).isoformat()}_{uuid.uuid4().hex[:8]}"
+    print(f"Run ID: {run_id}")
 
     mongo = MongoDB()
     quality_repository = QualityReportRepository(mongo.get_collection(constants.QUALITY_REPORTS))

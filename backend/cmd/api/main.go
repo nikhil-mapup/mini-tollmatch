@@ -27,7 +27,22 @@ func main() {
 	mismatchService := service.NewMismatchService(mismatchRepo)
 	mismatchHandler := handler.NewMismatchHandler(mismatchService)
 
-	r := router.New(mismatchHandler, cfg.AllowedOrigin)
+	tripRepo := repository.NewTripRepository(mongo.Collection(db.CollectionPhysicalTrip))
+	tripService := service.NewTripService(tripRepo)
+	tripHandler := handler.NewTripHandler(tripService)
+
+	overviewRepo := repository.NewOverviewRepository(
+		mongo.Collection(db.CollectionMismatches),
+		mongo.Collection(db.CollectionInvoiceRaw),
+	)
+	overviewService := service.NewOverviewService(overviewRepo, mismatchRepo)
+	overviewHandler := handler.NewOverviewHandler(overviewService)
+
+	invoiceViewRepo := repository.NewInvoiceViewRepository(mongo.Collection(db.CollectionMismatches))
+	invoiceViewService := service.NewInvoiceViewService(invoiceViewRepo)
+	invoiceViewHandler := handler.NewInvoiceViewHandler(invoiceViewService)
+
+	r := router.New(mismatchHandler, tripHandler, overviewHandler, invoiceViewHandler, cfg.AllowedOrigin)
 
 	log.Printf("listening on :%s", cfg.Port)
 	if err := r.Run(":" + cfg.Port); err != nil {

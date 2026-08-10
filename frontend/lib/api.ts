@@ -1,7 +1,13 @@
 import type {
+  CostOverviewByCostCenterResponse,
+  CostOverviewResponse,
   Filters,
+  InvoiceListResponse,
+  InvoiceOverviewResponse,
   MismatchListResponse,
+  OverviewResponse,
   SummaryResponse,
+  Trip,
   TypeCount,
 } from "@/types";
 
@@ -24,10 +30,6 @@ function buildQuery(filters: Filters): string {
   return params.toString();
 }
 
-function isPresent<T>(value: T | null | undefined): value is T {
-  return value !== null && value !== undefined;
-}
-
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
   if (!res.ok) {
@@ -37,45 +39,62 @@ async function fetchJSON<T>(path: string): Promise<T> {
 }
 
 export function getSummary(filters: Filters): Promise<SummaryResponse> {
-  return fetchJSON<Partial<SummaryResponse> | null>(`/api/summary?${buildQuery(filters)}`).then((data) => ({
-    totalTollSpend: data?.totalTollSpend ?? 0,
-    mismatchCount: data?.mismatchCount ?? 0,
-    mismatchAmount: data?.mismatchAmount ?? 0,
-    topType: data?.topType ?? "",
-  }));
+  return fetchJSON(`/api/summary?${buildQuery(filters)}`);
 }
 
 export function getMismatches(filters: Filters): Promise<MismatchListResponse> {
-  return fetchJSON<Partial<MismatchListResponse> | null>(`/api/mismatches?${buildQuery(filters)}`).then((data) => ({
-    items: (data?.items ?? []).filter(isPresent).map((item) => ({
-      ...item,
-      transactionId: item.transactionId ?? "",
-      unit: item.unit ?? "",
-      mismatchType: item.mismatchType ?? "",
-      billedAmount: item.billedAmount ?? 0,
-      entryTime: item.entryTime ?? "",
-      status: item.status ?? "",
-      detectedAt: item.detectedAt ?? "",
-    })),
-    total: data?.total ?? 0,
-    page: data?.page ?? 1,
-    limit: data?.limit ?? 20,
-  }));
+  return fetchJSON(`/api/mismatches?${buildQuery(filters)}`);
 }
 
 export function getUnits(): Promise<{ units: string[] }> {
-  return fetchJSON<{ units?: (string | null)[] | null } | null>(`/api/units`).then((data) => ({
-    units: (data?.units ?? []).filter((unit): unit is string => Boolean(unit)),
-  }));
+  return fetchJSON(`/api/units`);
 }
 
 export function getMismatchTypes(filters: Filters): Promise<{ types: TypeCount[] }> {
-  return fetchJSON<{ types?: (Partial<TypeCount> | null)[] | null } | null>(`/api/mismatch-types?${buildQuery(filters)}`).then(
-    (data) => ({
-      types: (data?.types ?? []).filter(isPresent).map((type) => ({
-        type: type.type ?? "",
-        count: type.count ?? 0,
-      })),
-    }),
-  );
+  return fetchJSON(`/api/mismatch-types?${buildQuery(filters)}`);
+}
+
+export function getTrips(unit: string): Promise<{ trips: Trip[] }> {
+  return fetchJSON(`/api/trips?unit=${encodeURIComponent(unit)}`);
+}
+
+// --- Screenshot-matched dashboard endpoints ---
+
+export function getOverview(filters: Filters): Promise<OverviewResponse> {
+  return fetchJSON(`/api/overview?${buildQuery(filters)}`);
+}
+
+export function getCostOverview(filters: Filters): Promise<CostOverviewResponse> {
+  return fetchJSON(`/api/cost-overview?${buildQuery(filters)}`);
+}
+
+export function getCostOverviewByCostCenter(
+  filters: Filters
+): Promise<CostOverviewByCostCenterResponse> {
+  return fetchJSON(`/api/cost-overview/by-cost-center?${buildQuery(filters)}`);
+}
+
+export function getInvoiceOverview(filters: Filters): Promise<InvoiceOverviewResponse> {
+  return fetchJSON(`/api/invoice-overview?${buildQuery(filters)}`);
+}
+
+export function getMismatchBreakdown(
+  filters: Filters
+): Promise<{ breakdown: { type: string; count: number }[] }> {
+  return fetchJSON(`/api/mismatch-breakdown?${buildQuery(filters)}`);
+}
+
+export function getTopUnits(filters: Filters, limit = 10): Promise<{ units: { unit: string; tollsPaid: number; tollsMismatch: number }[] }> {
+  return fetchJSON(`/api/top-units?${buildQuery(filters)}&limit=${limit}`);
+}
+
+export function getInvoices(
+  filters: Filters,
+  tab: string,
+  search: string
+): Promise<InvoiceListResponse> {
+  const params = new URLSearchParams(buildQuery(filters));
+  params.set("tab", tab);
+  if (search) params.set("search", search);
+  return fetchJSON(`/api/invoices?${params.toString()}`);
 }
