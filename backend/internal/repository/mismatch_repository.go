@@ -3,9 +3,9 @@ package repository
 import (
 	"context"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 
 	"tollmatch-backend/internal/models"
 )
@@ -161,15 +161,9 @@ func (r *MismatchRepository) List(ctx context.Context, f models.Filters, sortFie
 }
 
 func (r *MismatchRepository) DistinctUnits(ctx context.Context) ([]string, error) {
-	result, err := r.collection.Distinct(ctx, "unit", bson.M{})
-	if err != nil {
+	var units []string
+	if err := r.collection.Distinct(ctx, "unit", bson.M{}).Decode(&units); err != nil {
 		return nil, err
-	}
-	units := make([]string, 0, len(result))
-	for _, v := range result {
-		if s, ok := v.(string); ok {
-			units = append(units, s)
-		}
 	}
 	return units, nil
 }

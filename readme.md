@@ -1,13 +1,15 @@
 # Mini TollMatch
-The current implementation reads GPS and invoice files, reconstructs physical
-trips, sends each trip's GPS CSV to the TollMatch/TollGuru API, parses toll
-events from the API response, compares those expected tolls with invoice rows,
-and writes a reconciliation CSV.
+Mini TollMatch is a toll reconciliation prototype. It reads fleet GPS and toll
+invoice files, reconstructs physical trips, sends trip GPS traces to the
+TollMatch/TollGuru API, compares expected tolls with invoice rows, stores the
+results in MongoDB, and exposes a small dashboard for review.
 
 For the detailed pipeline logic, see
 [DATA_PIPELINE_LOGIC.md](DATA_PIPELINE_LOGIC.md).
 
 ## What is Currently Implemented
+
+### Data Pipeline
 
 - Reads GPS data from `data/Fleet_A_gps.parquet`
 - Reads invoice data from `data/FleetA_invoices.csv`
@@ -27,6 +29,38 @@ For the detailed pipeline logic, see
 - Reconciles invoice rows against detected toll points
 - Saves mismatch records in MongoDB
 - Writes final reconciliation output to `output/reconciliation.csv`
+
+### Backend API
+
+- Go API built with Gin
+- MongoDB-backed repositories and service layer
+- Health check at `GET /healthz`
+- Dashboard endpoints under `/api`
+- CORS configured through `ALLOWED_ORIGIN`
+
+Key endpoints:
+
+- `GET /api/summary`
+- `GET /api/mismatches`
+- `GET /api/units`
+- `GET /api/mismatch-types`
+- `GET /api/trips`
+- `GET /api/overview`
+- `GET /api/cost-overview`
+- `GET /api/cost-overview/by-cost-center`
+- `GET /api/invoice-overview`
+- `GET /api/mismatch-breakdown`
+- `GET /api/top-units`
+- `GET /api/invoices`
+
+### Frontend Dashboard
+
+- Next.js dashboard for reviewing reconciliation results
+- Overview metrics, cost overview, invoice overview, mismatch breakdown, top
+  mismatch units, and invoice table views
+- Filter support for unit, mismatch type, date range, sorting, pagination, and
+  invoice search
+- API URL configured server-side through `API_URL`
 
 ## Outputs
 
@@ -55,6 +89,22 @@ Local files currently produced:
 ├── data/
 │   ├── Fleet_A_gps.parquet             # Source GPS data
 │   └── FleetA_invoices.csv             # Source toll invoice data
+├── backend/
+│   ├── cmd/api/main.go                 # Go API entrypoint
+│   └── internal/
+│       ├── config/                     # Env-driven API configuration
+│       ├── db/                         # MongoDB connection and collection names
+│       ├── handler/                    # Gin HTTP handlers
+│       ├── middleware/                 # Logging and CORS middleware
+│       ├── models/                     # API response models
+│       ├── repository/                 # MongoDB query layer
+│       ├── router/                     # API route definitions
+│       └── service/                    # API business logic
+├── frontend/
+│   ├── app/                            # Next.js app routes
+│   ├── components/                     # Dashboard UI components
+│   ├── lib/api.ts                      # Server-side API client
+│   └── types.ts                        # Shared frontend types
 ├── pipeline/
 │   ├── main.py                         # Pipeline entrypoint
 │   ├── config/
@@ -161,13 +211,13 @@ response body.
 
 ## Run Locally
 
-### 1. Install Dependencies
+### 1. Install Pipeline Dependencies
 
 ```bash
 pip3 install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 2. Configure Pipeline Environment
 
 Create a `.env` file in the project root:
 
@@ -178,10 +228,68 @@ TOLLMATCH_API_URL=your_api_base_url
 TOLLMATCH_API_KEY=your_api_key
 ```
 
-### 3. Run
+### 3. Run the Pipeline
 
 From the project root:
 
 ```bash
 python3 pipeline/main.py
 ```
+
+### 4. Run the Backend API
+
+From the backend directory:
+
+```bash
+cd backend
+go run ./cmd/api
+```
+
+Backend environment variables:
+
+```env
+MONGO_URI=your_mongodb_connection_string
+MONGO_DB=tollmatch
+PORT=8080
+ALLOWED_ORIGIN=http://localhost:3000
+```
+
+### 5. Run the Frontend
+
+From the frontend directory:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend environment variable:
+
+```env
+API_URL=http://localhost:8080
+```
+
+The dashboard runs at `http://localhost:3000` by default.
+
+## Production Gap
+
+This project is currently a working prototype, not a production-ready toll
+reconciliation system. The most important production gap is vehicle-class
+accuracy: the pipeline currently uses a placeholder TollGuru vehicle type for
+SDK calls because there is no confirmed mapping from invoice `toll_class`
+values to TollGuru vehicle type enums, and there is no vehicle master-data
+lookup by unit. Any expected toll amount that depends on vehicle class should
+therefore be treated as provisional.
+
+Other known production gaps:
+
+- GPS gap and route-stitching thresholds are configured as placeholders and
+  still need percentile-backed validation on real fleet movement data.
+- The pipeline is batch-oriented and local-file driven; production would need
+  scheduled or event-driven ingestion, idempotent reruns, and operational
+  observability.
+- Error handling, retry policy, API rate-limit handling, and partial-run
+  recovery are minimal.
+- The dashboard has no authentication, authorization, audit logging, or
+  deployment hardening.
