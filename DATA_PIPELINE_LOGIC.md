@@ -1,196 +1,205 @@
-# Mini TollMatch --- Data Pipeline Logic
+# Mini TollMatch Data Pipeline Logic
 
 ## 1. Purpose
 
-This document describes the **current data pipeline, how data moves through the system, what each stage produces, why the stages are separated, and the current assumptions/open
-gaps.
+This document describes the current data pipeline, how data moves through the
+system, what each stage produces, and the assumptions behind the reconciliation
+logic.
 
-The overall goal is to reconstruct vehicle journeys, calculate the tolls
-expected on those journeys, and reconcile those expected toll events
-against actual invoice transactions.
+The goal is to reconstruct vehicle journeys, calculate expected toll events for
+those journeys, and reconcile those expected toll events against actual invoice
+transactions.
 
-------------------------------------------------------------------------
+## 2. High-Level Flow
 
-# 2. High-Level Architecture
-
-``` text
-                    ┌──────────────────┐
-                    │   GPS Parquet    │
-                    └────────┬─────────┘
-                             │
-                             ▼
-                  Unit + Date Filtering
-                             │
-                             ▼
-                       GPS Validation
-                             │
-                             ▼
-                    Group GPS by Unit
-                             │
-                             ▼
-                    Sort by Timestamp
-                             │
-                             ▼
-                    Route Segmentation
-                             │
-                             ├──────────────► GPS Gap Events
-                             │
-                             ▼
-                     Route Stitching
-                             │
-                             ▼
-                      Physical Trips
-                             │
-                             ▼
-                 One CSV per Physical Trip
-                             │
-                             ▼
-                       TollMatch API
-                             │
-                             ▼
-                     SDK Toll Results
-                             │
-                             ├──────────────► Toll Location Index
-                             │
-                             ▼
-                    Expected Toll Points
-                             │
-                             │
-                    ┌────────┴────────┐
-                    │                 │
-                    ▼                 ▼
-              GPS Gap/Toll       Invoice CSV
-               Correlation            │
-                    │                  ▼
-                    │           Unit + Date Filter
-                    │                  │
-                    │                  ▼
-                    │           MongoDB Invoice Raw
-                    │                  │
-                    └──────────┬───────┘
-                               ▼
-                       Reconciliation
-                               │
-                               ▼
-                         Mismatch Records
-                               │
-                    ┌──────────┴──────────┐
-                    ▼                     ▼
-                 MongoDB          reconciliation.csv
+```text
+GPS parquet
+  |
+  v
+Unit/date filtering
+  |
+  v
+GPS validation
+  |
+  v
+Group GPS by unit
+  |
+  v
+Route segmentation
+  |    |
+  |    `--> GPS gap events
+  v
+Route stitching
+  |
+  v
+Physical trips
+  |
+  v
+One CSV per physical trip
+  |
+  v
+TollMatch/TollGuru API
+  |
+  v
+SDK toll results
+  |
+  v
+Toll location index
+  |
+  +-------------------+
+  |                   |
+  v                   v
+GPS gap/toll       Invoice CSV
+correlation          |
+                     v
+                  Unit/date filtering
+                     |
+                     v
+                  MongoDB invoice_raw
+                     |
+  +------------------+
+  v
+Reconciliation
+  |
+  v
+Mismatch records
+  |
+  +--> MongoDB mismatches
+  |
+  `--> output/reconciliation.csv
 ```
 
-------------------------------------------------------------------------
+## 3. Execution Order
 
-# 3. Main Pipeline Execution
+The pipeline starts in `pipeline/main.py`.
 
-The current execution order is:
+1. Create a run ID.
+2. Connect to MongoDB.
+3. Read GPS records from `data/Fleet_A_gps.parquet`.
+4. Filter GPS records by selected units and date range.
+5. Validate GPS records.
+6. Save a GPS validation quality report.
+7. Group valid GPS records by unit.
+8. Split each unit's GPS records into route segments.
+9. Save route segments and GPS gap events.
+10. Stitch compatible route segments into physical trips.
+11. Save physical trips.
+12. Export each physical trip to a CSV under `output/tollguru/`.
+13. Send each CSV to the TollMatch/TollGuru API.
+14. Parse and save SDK results.
+15. Build an in-memory toll-location index.
+16. Correlate GPS gaps against known toll locations.
+17. Read invoice records from `data/FleetA_invoices.csv`.
+18. Filter invoices by selected units and date range.
+19. Save invoice rows to MongoDB with duplicate rejection.
+20. Reconcile invoices against detected toll points and GPS traces.
+21. Save mismatch records.
+22. Export `output/reconciliation.csv`.
 
-``` text
-1. Read GPS
-2. Filter GPS by unit
-3. Filter GPS by date
-4. Validate GPS
-5. Build route segments
-6. Detect GPS gaps
-7. Stitch route segments into physical trips
-8. Call TollMatch for each physical trip
-9. Build toll-location index
-10. Correlate GPS gaps with known toll locations
-11. Read invoices
-12. Filter invoices by unit/date
-13. Store invoices in MongoDB
-14. Reconcile invoice lines against toll locations + GPS
-15. Store mismatch/reconciliation results
-16. Export reconciliation.csv
+## 4. Configuration
+
+Runtime secrets and service URLs belong in `.env` or exported shell variables.
+The pipeline reads `.env` from the project root through `python-dotenv`.
+
+Pipeline `.env` keys:
+
+```env
+MONGO_URI=mongodb+srv://USER:PASSWORD@HOST/DATABASE?retryWrites=true&w=majority
+DATABASE_NAME=tollmatch
+TOLLMATCH_API_URL=https://example-toll-api-host
+TOLLMATCH_API_KEY=replace_with_real_api_key
 ```
 
-------------------------------------------------------------------------
+Backend and frontend env values are documented in `readme.md`.
 
-# 4. Stage 1 --- GPS Ingestion and Trip Reconstruction
+Current pipeline thresholds live in `pipeline/config/config.py`:
 
-## 4.1 Read GPS Parquet
+```text
+GPS_GAP_THRESHOLD_MINUTES = 30
+ROUTE_STITCH_MAX_GAP_MINUTES = 60
+ROUTE_STITCH_MAX_DISTANCE_KM = 5
+DWELL_RADIUS_KM = 0.3
+DWELL_THRESHOLD_MINUTES = 15
+TOLL_MATCH_TIME_TOLERANCE_MINUTES = 25
+TOLL_MATCH_DISTANCE_KM = 20
+AMOUNT_TOLERANCE_USD = 1.00
+DUPLICATE_TIME_WINDOW_MINUTES = 2
+```
 
-The internal model is:
+These values are prototype defaults and should be validated against real fleet
+movement, invoice, and toll data before production use.
 
-``` python
+## 5. GPS Ingestion
+
+`GPSReader` reads the parquet file and converts each row into:
+
+```python
 GPSRecord(
     latitude,
     longitude,
     gps_timestamp,
-    unit
+    unit,
 )
 ```
-The rest of the pipeline should work with a validated domain object
-rather than raw Pandas rows.
 
-------------------------------------------------------------------------
+The rest of the pipeline works with typed domain models instead of raw Pandas
+rows.
 
-# 5. GPS Validation
+## 6. Invoice Ingestion
 
-`validators/gps_validator.py` validates every in-scope GPS point.
+`InvoiceReader` reads the invoice CSV and converts each row into:
+
+```python
+InvoiceRecord(
+    post_date,
+    transaction_id,
+    tag_no,
+    unit,
+    cost_center,
+    entry_time,
+    exit_time,
+    toll_loc_name_start,
+    entry_plaza,
+    toll_loc_name_end,
+    exit_plaza,
+    toll_class,
+    agency,
+    amount,
+    transactiondesc,
+)
+```
+
+Invoice `unit` values are normalized so empty strings and text placeholders such
+as `nan`, `none`, and `null` become `None`.
+
+## 7. Filtering
+
+`GPSFilter` filters GPS records by `SELECTED_UNITS` when configured.
+
+`DateRangeFilter` applies `WINDOW_START` and `WINDOW_END` to both GPS records
+and invoice records. Setting either window value to `None` disables that side of
+the date boundary.
+
+## 8. GPS Validation
+
+`GPSValidator` validates every in-scope GPS point.
 
 Current validation rules:
 
-## 5.1 Latitude
+- Latitude must satisfy `-90 <= latitude <= 90`.
+- Longitude must satisfy `-180 <= longitude <= 180`.
+- `(0, 0)` null-island coordinates are rejected.
+- Missing units are rejected.
+- Future timestamps are rejected.
+- Exact duplicates are rejected by `(unit, timestamp, latitude, longitude)`.
 
-Must satisfy:
+Invalid records are excluded from trip reconstruction.
 
-``` text
--90 <= latitude <= 90
-```
+## 9. Quality Reporting
 
-## 5.2 Longitude
+Every validation run creates a `QualityReport` with:
 
-Must satisfy:
-
-``` text
--180 <= longitude <= 180
-```
-
-## 5.3 Null Island
-
-The coordinate:
-
-``` text
-(0, 0)
-```
-
-is explicitly rejected.
-
-Why?
-
-`0,0` passes ordinary latitude/longitude range validation but is
-commonly used as a missing/default GPS value.
-
-## 5.4 Missing unit
-
-A GPS record without a vehicle/unit cannot participate in vehicle-level
-reconstruction.
-
-## 5.5 Future timestamp
-
-GPS timestamps later than the current UTC time are rejected.
-
-## 5.6 Exact duplicate
-
-The following tuple is used to identify an exact duplicate:
-
-``` text
-(unit, timestamp, latitude, longitude)
-```
-
-Duplicates are excluded.
-
-------------------------------------------------------------------------
-
-# 6. Data Quality Reporting
-
-Invalid records are not simply discarded.
-
-For every validation run, the pipeline creates a `QualityReport`
-containing:
-
-``` text
+```text
 run_id
 stage
 total_input
@@ -199,783 +208,420 @@ total_invalid
 exclusion_counts
 ```
 
-The report is persisted in:
+Reports are saved to the `quality_reports` collection so validation loss is
+auditable by reason code.
 
-``` text
-quality_reports
-```
-
-This gives us an audit trail.
-
-Instead of saying:
-
-> "We had 10 invalid GPS points."
-
-we can answer:
-
-``` text
-10 invalid records
-
-INVALID_LATITUDE:       2
-NULL_ISLAND_COORDINATES: 4
-FUTURE_TIMESTAMP:       3
-DUPLICATE_GPS:           1
-```
-
-------------------------------------------------------------------------
-
-# 7. Group GPS by Vehicle
+## 10. Grouping by Vehicle
 
 `GroupByUnitProcessor` groups GPS points by `unit`.
 
-Conceptually:
+GPS points from different vehicles are never sorted and processed together. A
+route can only be reconstructed within one physical vehicle.
 
-``` text
-GPS
- │
- ├── unit 1027
- │     ├── point
- │     ├── point
- │     └── ...
- │
- ├── unit 1951
- │     ├── point
- │     ├── point
- │     └── ...
- │
- └── unit S17033
-       ├── point
-       └── ...
-```
+## 11. Route Segmentation
 
-A route can only be reconstructed within the same physical vehicle.
+`RouteSegmenter` sorts each unit's GPS points by timestamp and splits them into
+route segments using two independent boundary signals.
 
-GPS points from two vehicles must never be sorted and processed
-together.
+### 11.1 Telemetry Gap Boundary
 
-------------------------------------------------------------------------
+For consecutive GPS points, the segmenter calculates:
 
-# 8. Route Segmentation
-
-`RouteSegmenter` sorts each vehicle's GPS points by timestamp.
-
-For consecutive points:
-
-``` text
-previous GPS timestamp
-        ↓
-next GPS timestamp
-```
-
-it calculates:
-
-``` text
+```text
 gap = next_timestamp - previous_timestamp
 ```
 
-If:
+If the gap is greater than `GPS_GAP_THRESHOLD_MINUTES`, a new route segment is
+created and a `GPSGap` is saved.
 
-``` text
-gap > GPS_GAP_THRESHOLD_MINUTES
-```
+Current threshold:
 
-a new route segment is created.
-
-Current configured threshold:
-
-``` text
+```text
 30 minutes
 ```
 
-------------------------------------------------------------------------
+### 11.2 Stationary Dwell Boundary
 
-# 9. Route IDs
+The segmenter also detects when the device keeps reporting but the vehicle has
+stopped moving. Starting from an anchor point, it scans forward while later
+points remain within `DWELL_RADIUS_KM` of the anchor. If the stationary period
+lasts at least `DWELL_THRESHOLD_MINUTES`, the dwell period is treated as a trip
+boundary.
 
-Route IDs are generated because the GPS dataset does not provide a Route
-ID.
+Current dwell settings:
 
-The current format is:
+```text
+DWELL_RADIUS_KM = 0.3
+DWELL_THRESHOLD_MINUTES = 15
+```
 
-``` text
+Points inside a qualifying dwell period are excluded from both adjacent
+segments because they represent the vehicle at rest, not travel.
+
+This exists because telematics devices can continue pinging while parked. A pure
+time-gap rule can accidentally turn several days of parked and moving data into
+one giant trip when the device never goes silent.
+
+## 12. Route IDs
+
+The GPS dataset does not provide route IDs, so the pipeline generates them:
+
+```text
 ROUTE-{unit}-{sequence}
 ```
 
 Example:
 
-``` text
+```text
 ROUTE-1951-0001
 ROUTE-1951-0002
 ROUTE-1951-0003
 ```
 
-Each Route ID represents a **continuous GPS segment**, not necessarily a
+Each route ID represents a continuous GPS segment. It is not necessarily a
 complete physical trip.
 
-This distinction is important.
+## 13. GPS Gap Events
 
-``` text
-Route Segment
-    ↓
-may later be stitched
-    ↓
-Physical Trip
-```
+When a telemetry gap exceeds the configured threshold, the pipeline creates a
+`GPSGap` with:
 
-------------------------------------------------------------------------
-
-# 10. GPS Gap Events
-
-When a gap exceeds the configured threshold, a `GPSGap` is created.
-
-It contains:
-
-``` text
+```text
 unit
 previous_timestamp
 next_timestamp
-
 previous_latitude
 previous_longitude
-
 next_latitude
 next_longitude
-
 gap_seconds
 threshold_seconds
-
 route_split
 possible_missed_toll
 matched_toll_point_name
 ```
 
-Later, after TollMatch has identified toll locations, the two sides of
-the GPS gap can be checked against known toll coordinates.
+After TollMatch/TollGuru results exist, the gap can be checked against known
+toll coordinates. This allows the pipeline to flag:
 
-This allows us to detect:
-
-``` text
-GPS telemetry gap
-+
-near a known toll
-=
-possible missed toll
+```text
+GPS telemetry gap + near known toll = possible missed toll
 ```
 
-The gap is therefore not silently thrown away.
+## 14. Route Stitching
 
-------------------------------------------------------------------------
-
-# 11. Route Stitching
-
-After segmentation, `RouteStitcher` attempts to merge consecutive Route
-Segments into a `PhysicalTrip`.
+`RouteStitcher` attempts to merge consecutive route segments into a
+`PhysicalTrip`.
 
 Two segments can be stitched when:
 
-``` text
+```text
 time_gap <= ROUTE_STITCH_MAX_GAP_MINUTES
-AND
-distance_between_previous_end_and_next_start
-    <= ROUTE_STITCH_MAX_DISTANCE_KM
+and
+distance_between_previous_end_and_next_start <= ROUTE_STITCH_MAX_DISTANCE_KM
 ```
 
 Current configuration:
 
-``` text
-maximum stitch gap     = 60 minutes
+```text
+maximum stitch gap = 60 minutes
 maximum stitch distance = 5 km
 ```
 
-Distance is calculated using the Haversine formula.
+Distance is calculated with the Haversine formula.
 
-------------------------------------------------------------------------
+Segmentation and stitching are separate decisions:
 
-# 12
+- Segmentation asks whether a telemetry or dwell signal indicates a boundary.
+- Stitching asks whether adjacent segments still plausibly belong to the same
+  physical journey.
 
-These are intentionally separate decisions.
+The pipeline must not stitch merely because two dates are consecutive.
 
-### Segmentation asks:
+## 15. Physical Trips
 
-> "Is there a sufficiently large telemetry gap that we should create a
-> new route segment?"
+A `PhysicalTrip` contains:
 
-### Stitching asks:
-
-> "Even though the telemetry was interrupted, is the next segment
-> plausibly the continuation of the same physical journey?"
-
-Example:
-
-``` text
-Route A
-ends 23:55
-Houston
-
-Route B
-starts 00:10
-nearby location
+```text
+trip_id
+unit
+start_time
+end_time
+route_ids
+gps_point_count
+gps_points
 ```
 
-The date changed, but:
+Trips are saved in the `physical_trips` collection.
 
-``` text
-15 minute gap
-+
-small geographic distance
-```
+## 16. Toll Detection and Calculation
 
-may indicate one physical journey.
+For every physical trip:
 
-Therefore:
-
-``` text
-Route A + Route B
-        ↓
-Physical Trip
-```
-
-We must **not** stitch merely because two dates are consecutive.
-
-------------------------------------------------------------------------
-
-# 13. Stage 2 --- Toll Detection and Calculation
-
-For every `PhysicalTrip`:
-
-``` text
+```text
 PhysicalTrip
-     ↓
-CSV export
-     ↓
-TollMatch GPS Tracks API
-     ↓
-Raw JSON response
-     ↓
-TollMatchParser
-     ↓
+  |
+  v
+TripCSVExporter
+  |
+  v
+TollMatch/TollGuru API
+  |
+  v
+TollGuruParser
+  |
+  v
 SDKResult
 ```
 
-------------------------------------------------------------------------
+`TripCSVExporter` writes one CSV with these headers:
 
-# 14. TollMatch CSV Export
-
-`TripCSVExporter` generates one CSV for each PhysicalTrip.
-
-The intended payload fields are:
-
-``` text
-latitude
-longitude
-timestamp
-units
+```csv
+latitude,longitude,timestamp,units
 ```
 
-The exporter currently writes exactly those header names.
+The API call sends the CSV file content directly as the request body with:
 
-------------------------------------------------------------------------
-
-# 15. Why Toll Points Instead of One Trip Cost?
-
-A physical trip may contain multiple toll events.
-
-For example:
-
-``` text
-Physical Trip
-    │
-    ├── Toll A
-    ├── Toll B
-    └── Toll C
+```text
+Content-Type: text/csv
 ```
 
-The invoice may contain:
+The request is not multipart form data.
 
-``` text
-Invoice A → Toll A
-Invoice B → Toll B
-Invoice C → Toll C
+## 17. Vehicle Type Handling
+
+Vehicle-class handling is currently a known prototype gap.
+
+`DEFAULT_VEHICLE_TYPE` is configured as:
+
+```text
+5AxlesTruck
 ```
 
-Therefore this would be insufficient:
+The current HTTP client sends `5AxlesTruck` in the `vehicle` query parameter.
+There is not yet a confirmed mapping from invoice `toll_class` values to
+TollGuru vehicle type enums, and there is no vehicle master-data lookup by
+unit.
 
-``` text
-Physical Trip
-expected_total = $10
+Any expected toll amount that depends on vehicle class should be treated as
+provisional until this is replaced with a real per-trip vehicle type lookup.
+
+## 18. SDK Result Persistence
+
+`TollGuruParser` extracts:
+
+- trip ID and unit;
+- requested and returned vehicle type;
+- vehicle type mismatch flag;
+- toll presence;
+- distance in kilometers when available;
+- warning types;
+- expected toll points.
+
+Each `SDKResult` is saved to `sdk_results`. The repository saves by `trip_id`,
+so rerunning the same trip replaces the prior SDK result instead of creating
+unbounded duplicates.
+
+## 19. Expected Toll Points
+
+A physical trip can contain multiple toll events. The pipeline stores toll
+points rather than only a trip total because invoice rows reconcile at the
+transaction level.
+
+Each expected toll point can include:
+
+```text
+name
+road
+agency
+state
+start_lat
+start_lng
+arrival_time
+tag_cost
+tag_cost_min
+tag_cost_max
+license_plate_cost
+cash_cost
 ```
 
-We need:
+## 20. Toll Location Index
 
-``` text
-ExpectedTollPoint A
-ExpectedTollPoint B
-ExpectedTollPoint C
+`TollLocationIndex` indexes toll points by:
+
+```text
+unit + normalized toll name
 ```
 
-so each invoice transaction can be reconciled independently.
+The current assumption is that invoice `toll_loc_name_start` can be normalized
+and matched to an SDK toll point name. That assumption should be validated
+against real invoice and SDK naming conventions.
 
-------------------------------------------------------------------------
+## 21. GPS Gap to Possible Missed Toll
 
-# 16. Expected Toll Cost
+`GapTollCorrelator` examines GPS gaps after toll locations have been indexed.
+If a gap is near a known toll point for the same unit, the gap is marked as a
+possible missed toll and written back to MongoDB.
 
-The current reconciliation logic selects the expected billing method
-based on the invoice:
+This does not create a billed mismatch by itself. It is an investigation signal
+attached to the GPS gap event.
 
-``` text
-invoice has tag_no
-        ↓
-tag billing
-        ↓
-use SDK tag_cost
+## 22. Invoice Persistence
+
+Invoices are saved to `invoice_raw`.
+
+The repository creates:
+
+- a unique index on `transaction_id`;
+- a lookup index on `(unit, entry_time)`.
+
+Duplicate invoice batches are rejected at the MongoDB unique-index layer.
+
+## 23. Reconciliation Logic
+
+`ReconciliationService` reconciles each invoice row against expected toll
+points and GPS traces for the same unit.
+
+### 23.1 Unassigned
+
+An invoice becomes `unassigned` when:
+
+- the invoice has no unit; or
+- the invoice unit/toll-name combination cannot be found in the toll-location
+  index; or
+- the indexed toll point does not have coordinates.
+
+### 23.2 Match Confirmation
+
+A toll event is only considered matched when both checks pass:
+
+```text
+abs(gps_timestamp - invoice.entry_time) <= TOLL_MATCH_TIME_TOLERANCE_MINUTES
+and
+distance(gps_point, toll_point) <= TOLL_MATCH_DISTANCE_KM
 ```
 
-If:
+Current settings:
 
-``` text
-invoice.tag_no is empty
+```text
+time tolerance = 25 minutes
+distance tolerance = 20 km
 ```
 
-the pipeline attempts:
+Time alone is not enough. Distance alone is not enough.
 
-``` text
-license plate cost
+### 23.3 Unmatched
+
+An invoice becomes `unmatched` when:
+
+- a toll point was found by name, but no GPS point confirms it within both time
+  and distance; or
+- the GPS/location match exists but there is no usable expected amount.
+
+### 23.4 Expected Amount Selection
+
+Expected amount is selected from the invoice billing context:
+
+```text
+invoice has tag_no -> use tag_cost
+invoice has no tag_no -> use license_plate_cost
+fallback -> use cash_cost when available
 ```
 
-and then has a cash fallback if available.
+The billing method is recorded as `tag`, `plate`, or `cash_fallback`.
 
-This is important because the same toll location can have different
-rates depending on payment/billing method.
+### 23.5 Amount Classification
 
-------------------------------------------------------------------------
+After a GPS/location match and expected amount are found:
 
-# 17. SDK Result Persistence
-
-Each `SDKResult` is stored in:
-
-``` text
-sdk_results
+```text
+delta = billed_amount - expected_amount
 ```
 
-with a unique `trip_id`.
+The mismatch type is:
 
-This makes the SDK stage idempotent at the trip level:
+- `reconciled` when `abs(delta) <= AMOUNT_TOLERANCE_USD`;
+- `max_toll` when tag billing is expected and billed amount is within tolerance
+  of `tag_cost_max`;
+- `misread` for any other confirmed location/time match with an amount delta.
 
-``` text
-same trip_id
-    ↓
-replace existing result
+### 23.6 Duplicate Flagging
+
+After initial classification, `_flag_duplicates` groups reconciled candidates by:
+
+```text
+unit + matched_toll_point_name
 ```
 
-rather than creating an unlimited number of duplicate SDK result
-documents.
+For groups with more than one row, rows after the first are marked as
+`duplicate`.
 
-------------------------------------------------------------------------
+The configured `DUPLICATE_TIME_WINDOW_MINUTES` value exists in config, but the
+current implementation does not yet apply it when flagging duplicates.
 
-# 18. Toll Location Index
+## 24. Mismatch Records
 
-After every successful SDK call, `TollLocationIndex` indexes toll points
-by:
+Mismatch records are saved to `mismatches` and include:
 
-``` text
-unit
-+
-normalized toll name
-```
-
-Conceptually:
-
-``` text
-unit 1951
-    │
-    ├── normalized toll name A → coordinates + cost
-    ├── normalized toll name B → coordinates + cost
-    └── normalized toll name C → coordinates + cost
-```
-
-The purpose is to convert invoice location information into a known
-geographic toll point.
-
-The current assumption is that:
-
-``` text
-invoice.toll_loc_name_start
-```
-
-can be normalized and matched to:
-
-``` text
-SDK toll point name
-```
-
-This assumption should be validated against the real invoice/SDK data
-because different agencies may use different naming conventions.
-
-------------------------------------------------------------------------
-
-# 19. GPS Gap → Possible Missed Toll
-
-After TollMatch results exist, `GapTollCorrelator` examines previously
-detected GPS gaps.
-
-For each gap:
-
-``` text
-gap before coordinate
-gap after coordinate
-```
-
-are compared to known toll coordinates using Haversine distance.
-
-If either side is within:
-
-``` text
-20 km
-```
-
-of a known toll point, the gap is flagged:
-
-``` text
-possible_missed_toll = true
-```
-
-This is a warning signal, not proof of a missed toll.
-
-Reason:
-
-``` text
-GPS gap near toll
-```
-
-could mean:
-
--   missing telemetry
--   tunnel/network outage
--   toll crossing during telemetry loss
--   unrelated nearby road/toll
-
-Therefore the result is intentionally called a **possible missed toll**.
-
-------------------------------------------------------------------------
-
-# 20. Stage 4 --- Invoice Ingestion
-
-The invoice CSV is read into:
-
-``` text
-InvoiceRecord
-```
-
-The pipeline then applies:
-
-``` text
-unit filter
-+
-date filter
-```
-
-and stores the invoice records in:
-
-``` text
-invoice_raw
-```
-
-------------------------------------------------------------------------
-
-# 21. Core Reconciliation Rule
-
-The core business rule currently implemented is:
-
-> A toll is considered matched only when BOTH the time and distance
-> conditions pass.
-
-### Time
-
-A GPS point for the invoice's vehicle must be within:
-
-``` text
-±25 minutes
-```
-
-of:
-
-``` text
-invoice.entry_time
-```
-
-### Distance
-
-That same GPS point must be within:
-
-``` text
-20 km
-```
-
-Haversine distance of the resolved toll location.
-
-Therefore:
-
-``` text
-TIME PASS
-    AND
-DISTANCE PASS
-    =
-MATCH
-```
-
-Neither condition alone is sufficient.
-
-------------------------------------------------------------------------
-
-# 22. Why the Same GPS Point Must Pass Both
-
-We should not do:
-
-``` text
-GPS point A
-passes time
-
-GPS point B
-passes distance
-
-therefore match
-```
-
-That can create a false match.
-
-The implementation searches for a **single GPS point** that satisfies
-both:
-
-``` text
-abs(GPS timestamp - invoice.entry_time) <= 25 min
-AND
-Haversine(GPS point, toll coordinates) <= 20 km
-```
-
-This is a strong safeguard.
-
-------------------------------------------------------------------------
-
-# 23. Invoice-to-Toll Matching Flow
-
-For each invoice:
-
-``` text
-Invoice
-  │
-  ▼
-Find SDK toll point using normalized toll_loc_name_start
-  │
-  ├── no toll point
-  │       ↓
-  │    unassigned
-  │
-  ▼
-Find GPS points for same unit
-  │
-  ▼
-Check ±25 minute window
-  │
-  ▼
-Check ≤20 km distance
-  │
-  ├── no confirming GPS
-  │       ↓
-  │    unmatched
-  │
-  ▼
-Determine billing method
-  │
-  ▼
-Select expected SDK amount
-  │
-  ▼
-Compare invoice amount
-  │
-  ▼
-Classify reconciliation result
-```
-
-------------------------------------------------------------------------
-
-# 24. Amount Reconciliation
-
-Once a toll event is matched:
-
-``` text
-expected_amount = SDK selected billing-method cost
-actual_amount   = invoice.amount
-```
-
-Then:
-
-``` text
-delta = actual_amount - expected_amount
-```
-
-The current tolerance is:
-
-``` text
-AMOUNT_TOLERANCE_USD = $1.00
-```
-
-If:
-
-``` text
-abs(delta) <= $1
-```
-
-the result is:
-
-``` text
-reconciled
-```
-
-If it does not reconcile, the pipeline can classify patterns such as:
-
-``` text
-max_toll
-misread
-```
-
-according to the current implementation.
-
-------------------------------------------------------------------------
-
-# 25. Important: Max Toll
-
-TollMatch can provide:
-
-``` text
-tagCostMin
-tagCost
-tagCostMax
-```
-
-The current logic treats a billed amount close to the maximum reference
-as:
-
-``` text
-max_toll
-```
-
-when the normal expected amount is meaningfully different.
-
-This can help identify cases where the agency billed at a
-maximum/fallback rate.
-
-------------------------------------------------------------------------
-
-# 26. Reconciliation Output
-
-Each invoice produces a `Mismatch` record containing information such
-as:
-
-``` text
+```text
 transaction_id
 unit
 trip_id
 mismatch_type
-
+entry_time
 billing_method
-
 expected_amount
 billed_amount
 delta_amount
-
 matched_toll_point_name
 time_delta_seconds
-
 status
 detected_at
 ```
 
-This makes the result explainable rather than simply returning:
+Current mismatch types:
 
-``` text
-MATCH / NO MATCH
-```
-
-------------------------------------------------------------------------
-
-# 27. End-to-End Example
-
-Suppose:
-
-``` text
-Vehicle:
-1951
-```
-
-GPS data contains:
-
-``` text
-10:00
-10:01
-10:02
-...
-```
-
-A large telemetry gap occurs:
-
-``` text
-10:10
-      ↓
-10:55
-```
-
-The pipeline creates:
-
-``` text
-ROUTE-1951-0001
-ROUTE-1951-0002
-```
-
-If the second segment begins close enough in time and geography, they
-may be stitched into:
-
-``` text
-TRIP-1951-ROUTE-1951-0001
-```
-
-That trip's GPS points are sent to TollMatch.
-
-Suppose TollMatch detects:
-
-``` text
-Toll A = $8
-Toll B = $2
-```
-
-The invoice contains:
-
-``` text
-Invoice A
-unit = 1951
-location = Toll A
-entry_time = around Toll A crossing
-amount = $8
-```
-
-The reconciliation engine checks:
-
-``` text
-same unit       → YES
-time <= 25 min  → YES
-distance <= 20 km → YES
-```
-
-Then:
-
-``` text
-expected = $8
-billed   = $8
-delta    = $0
-```
-
-Result:
-
-``` text
+```text
+unassigned
+unmatched
+duplicate
+max_toll
+misread
 reconciled
 ```
 
-------------------------------------------------------------------------
+`entry_time` is stored on mismatch records so dashboard date filters can query
+the `mismatches` collection directly.
+
+## 25. Outputs
+
+MongoDB collections:
+
+```text
+route_segments
+gps_gap_events
+physical_trips
+trip_points
+quality_reports
+sdk_results
+invoice_raw
+mismatches
+```
+
+Local generated files:
+
+```text
+output/tollguru/<trip_id>.csv
+output/reconciliation.csv
+```
+
+## 27. Current Open Gaps
+
+- Vehicle type is still a placeholder and not derived from invoice class or a
+  vehicle master-data source.
+- Threshold values are configured but not yet statistically validated.
+- Duplicate detection currently ignores `DUPLICATE_TIME_WINDOW_MINUTES`.
+- Toll name normalization assumes invoice names and SDK names are compatible.
+- Pipeline runs are batch-oriented and local-file driven.
+- API retries, rate-limit handling, partial-run recovery, and observability are
+  minimal.

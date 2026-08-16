@@ -10,7 +10,7 @@ class MismatchRepository:
         self.collection.create_index([("mismatch_type", 1)])
 
     def save(self, mismatch: Mismatch):
-        document = mismatch.model_dump(mode="json")
+        document = mismatch.model_dump(mode="python")
         self.collection.replace_one(
             {"transaction_id": mismatch.transaction_id}, document, upsert=True
         )

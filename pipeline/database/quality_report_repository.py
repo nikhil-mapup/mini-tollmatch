@@ -11,7 +11,7 @@ class QualityReportRepository:
         self.collection.create_index([("run_id", 1), ("stage", 1)])
 
     def save(self, report: QualityReport):
-        self.collection.insert_one(report.model_dump(mode="json"))
+        self.collection.insert_one(report.model_dump(mode="python"))
 
     @staticmethod
     def build_from_validation(run_id: str, stage: str, result: ValidationResult) -> QualityReport:

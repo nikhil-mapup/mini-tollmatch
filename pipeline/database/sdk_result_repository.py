@@ -9,6 +9,6 @@ class SDKResultRepository:
         self.collection.create_index([("unit", 1)])
 
     def save(self, result: SDKResult):
-        document = result.model_dump(mode="json")
+        document = result.model_dump(mode="python")
         document["_id"] = result.trip_id
         self.collection.replace_one({"_id": result.trip_id}, document, upsert=True)

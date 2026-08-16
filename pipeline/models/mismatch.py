@@ -13,6 +13,13 @@ class Mismatch(BaseModel):
     mismatch_type: str
     # unassigned | unmatched | duplicate | max_toll | misread | reconciled
 
+    # Copied from the invoice at creation time. Required for date-range
+    # filtering to work at all — without this field, every date-filtered
+    # query against `mismatches` silently matched zero documents (Mongo
+    # drops documents missing the field being compared), which is what
+    # produced both the "1/1/1" display bug and the null-breakdown crash.
+    entry_time: datetime
+
     billing_method: Optional[str] = None  # "tag" | "plate" | None
     expected_amount: Optional[float] = None
     billed_amount: float

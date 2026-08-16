@@ -25,7 +25,11 @@ function labelFor(type: string): string {
 }
 
 export function MismatchBreakdownPie({ data }: { data: MismatchBreakdownItem[] }) {
-  const total = data.reduce((sum, d) => sum + d.count, 0);
+  // Defense in depth: the backend now guarantees a real array (never
+  // null), but this component shouldn't crash even if that guarantee is
+  // ever violated by a future change on the API side.
+  const safeData = data ?? [];
+  const total = safeData.reduce((sum, d) => sum + d.count, 0);
 
   return (
     <div className="rounded border border-line bg-white shadow-sm">
@@ -43,14 +47,14 @@ export function MismatchBreakdownPie({ data }: { data: MismatchBreakdownItem[] }
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={data}
+                  data={safeData}
                   dataKey="count"
                   nameKey="type"
                   innerRadius={60}
                   outerRadius={100}
                   paddingAngle={2}
                 >
-                  {data.map((entry) => (
+                  {safeData.map((entry) => (
                     <Cell key={entry.type} fill={COLORS[entry.type] ?? "#D1D5DB"} />
                   ))}
                 </Pie>

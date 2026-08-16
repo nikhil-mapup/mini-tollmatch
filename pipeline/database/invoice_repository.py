@@ -16,7 +16,7 @@ class InvoiceRepository:
         if not invoices:
             return {"inserted": 0, "duplicates_rejected": 0}
 
-        documents = [inv.model_dump(mode="json") for inv in invoices]
+        documents = [inv.model_dump(mode="python") for inv in invoices]
 
         inserted = 0
         duplicates_rejected = 0

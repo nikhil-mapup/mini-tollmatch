@@ -25,6 +25,24 @@ GPS_GAP_THRESHOLD_MINUTES = 30
 ROUTE_STITCH_MAX_GAP_MINUTES = 60
 ROUTE_STITCH_MAX_DISTANCE_KM = 5
 
+# Dwell-based trip boundary detection — added because the pure time-gap
+# check above only catches trip boundaries where the GPS device actually
+# stops transmitting. Real telematics hardware often pings continuously
+# even while parked (this is exactly what produced the week-long
+# single-trip bug: 10,713 points, Oct 8-15, zero gaps ever exceeding 30
+# minutes because the device never went silent overnight). A dwell check
+# catches "the vehicle stopped MOVING" independently of "the device
+# stopped REPORTING" — the two are different signals and a real trip
+# boundary can be caused by either one.
+#
+# TODO: like GPS_GAP_THRESHOLD_MINUTES, these are placeholders — validate
+# against real GPS traces of known parking/depot dwell times before
+# treating them as final. 300m allows for GPS drift and movement around a
+# depot lot without falsely extending the dwell; 15 minutes is meant to be
+# long enough to not fire on ordinary traffic stops/red lights.
+DWELL_RADIUS_KM = 0.3
+DWELL_THRESHOLD_MINUTES = 15
+
 # A GPS reading sitting exactly on (0, 0) is not a real location — it's the
 # classic "null island" sentinel value for missing/default coordinates.
 # It passes a normal lat/lon range check silently (0 is a valid number),

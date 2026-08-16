@@ -14,7 +14,7 @@ def save_to_collection(collection, records, batch_size=5000):
 
     for start in range(0, total_records, batch_size):
         batch = records[start : start + batch_size]
-        documents = [record.model_dump(mode="json") for record in batch]
+        documents = [record.model_dump(mode="python") for record in batch]
         result = collection.insert_many(documents)
         total_inserted += len(result.inserted_ids)
         print(

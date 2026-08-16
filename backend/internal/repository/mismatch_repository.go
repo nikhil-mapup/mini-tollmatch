@@ -187,5 +187,13 @@ func (r *MismatchRepository) TypeCounts(ctx context.Context, f models.Filters) (
 	if err := cursor.All(ctx, &results); err != nil {
 		return nil, err
 	}
+	if results == nil {
+		// A nil Go slice marshals to JSON `null`, not `[]`. This was the
+		// exact site of the reported crash: frontend code calling
+		// .reduce() on the breakdown array would throw when this endpoint
+		// returned zero rows (which happened on every date-filtered query,
+		// since entry_time didn't exist on mismatches at all until now).
+		results = []models.TypeCount{}
+	}
 	return results, nil
 }

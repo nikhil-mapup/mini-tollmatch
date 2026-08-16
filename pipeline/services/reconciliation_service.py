@@ -50,6 +50,7 @@ class ReconciliationService:
         if not invoice.unit:
             return Mismatch(
                 transaction_id=invoice.transaction_id,
+                entry_time=invoice.entry_time,
                 unit="UNKNOWN",
                 mismatch_type="unassigned",
                 billed_amount=invoice.amount,
@@ -60,6 +61,7 @@ class ReconciliationService:
             
             return Mismatch(
                 transaction_id=invoice.transaction_id,
+                entry_time=invoice.entry_time,
                 unit=invoice.unit,
                 mismatch_type="unassigned",
                 billed_amount=invoice.amount,
@@ -70,6 +72,7 @@ class ReconciliationService:
         if confirmed_point is None:
             return Mismatch(
                 transaction_id=invoice.transaction_id,
+                entry_time=invoice.entry_time,
                 unit=invoice.unit,
                 mismatch_type="unmatched",
                 billed_amount=invoice.amount,
@@ -81,6 +84,7 @@ class ReconciliationService:
         if expected_amount is None:
             return Mismatch(
                 transaction_id=invoice.transaction_id,
+                entry_time=invoice.entry_time,
                 unit=invoice.unit,
                 mismatch_type="unmatched",
                 billed_amount=invoice.amount,
@@ -94,6 +98,7 @@ class ReconciliationService:
 
         return Mismatch(
             transaction_id=invoice.transaction_id,
+            entry_time=invoice.entry_time,
             unit=invoice.unit,
             trip_id=trip_id,
             mismatch_type=mismatch_type,
