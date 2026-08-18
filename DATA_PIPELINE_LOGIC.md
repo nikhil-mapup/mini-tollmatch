@@ -614,14 +614,3 @@ Local generated files:
 output/tollguru/<trip_id>.csv
 output/reconciliation.csv
 ```
-
-## 27. Current Open Gaps
-
-- Vehicle type is still a placeholder and not derived from invoice class or a
-  vehicle master-data source.
-- Threshold values are configured but not yet statistically validated.
-- Duplicate detection currently ignores `DUPLICATE_TIME_WINDOW_MINUTES`.
-- Toll name normalization assumes invoice names and SDK names are compatible.
-- Pipeline runs are batch-oriented and local-file driven.
-- API retries, rate-limit handling, partial-run recovery, and observability are
-  minimal.
