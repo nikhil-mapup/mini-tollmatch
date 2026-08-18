@@ -17,11 +17,6 @@ func NewInvoiceViewHandler(s *service.InvoiceViewService) *InvoiceViewHandler {
 	return &InvoiceViewHandler{service: s}
 }
 
-// List handles GET /api/invoices (screenshot 7). Deliberately does NOT
-// implement export, dispute creation, "Open in TollPay", "Enable Edit
-// Invoices", or a Match Type filter dropdown — none of those have real
-// backing functionality in this pipeline, per the request to only build
-// what we actually have.
 func (h *InvoiceViewHandler) List(c *gin.Context) {
 	filters := parseFilters(c)
 	tab := c.DefaultQuery("tab", "all")

@@ -15,11 +15,7 @@ class QualityReportRepository:
 
     @staticmethod
     def build_from_validation(run_id: str, stage: str, result: ValidationResult) -> QualityReport:
-        """
-        Every invalid record can have multiple error codes (e.g. a point can be
-        both NULL_ISLAND and FUTURE_TIMESTAMP at once) — count each occurrence,
-        not just each record, so the summary reflects the real exclusion reasons.
-        """
+        
         counts = Counter()
         for invalid in result.invalid_records:
             for error in invalid.errors:

@@ -1,10 +1,3 @@
-"""
-Collection name constants. These MUST be used everywhere a collection is
-opened — no hardcoded collection-name strings in main.py or elsewhere.
-Previously these existed but went unused (main.py had hardcoded strings
-that didn't even match these names) — that's fixed now.
-"""
-
 GPS_RAW = "gps_raw"
 INVOICE_RAW = "invoice_raw"
 

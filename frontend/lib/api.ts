@@ -27,6 +27,8 @@ function buildQuery(filters: Filters): string {
   if (filters.sort) params.set("sort", filters.sort);
   if (filters.order) params.set("order", filters.order);
   if (filters.page) params.set("page", filters.page);
+  if (filters.transactionId) params.set("transactionId", filters.transactionId);
+  if (filters.tagNo) params.set("tagNo", filters.tagNo);
   return params.toString();
 }
 

@@ -10,8 +10,6 @@ import (
 	"tollmatch-backend/internal/config"
 )
 
-// Mongo wraps the driver client and exposes collection getters, so callers
-// never construct a *mongo.Collection by hand or repeat the DB name string.
 type Mongo struct {
 	client *mongo.Client
 	dbName string
@@ -47,9 +45,6 @@ func (m *Mongo) Disconnect(ctx context.Context) error {
 	return m.client.Disconnect(ctx)
 }
 
-// Collection name constants — mirrors config/constants.py from the Python
-// pipeline. Keeping these in one place means a typo in a collection name
-// is a compile error here, not a silent empty-result query at runtime.
 const (
 	CollectionMismatches   = "mismatches"
 	CollectionQualityRepts = "quality_reports"

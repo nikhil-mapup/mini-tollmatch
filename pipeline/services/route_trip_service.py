@@ -2,9 +2,7 @@ from processors.group_by_unit import GroupByUnitProcessor
 from processors.route_segmenter import RouteSegmenter
 from processors.route_stitcher import RouteStitcher
 
-
 class RouteTripService:
-
     def __init__(self, route_repository, gap_repository, trip_repository, trip_point_repository):
         self.group_processor = GroupByUnitProcessor()
         self.segmenter = RouteSegmenter()
@@ -18,7 +16,7 @@ class RouteTripService:
         grouped = self.group_processor.process(gps_records)
 
         all_trips = []
-        all_gaps = []  # returned now — gap-toll correlation needs these
+        all_gaps = []  
 
         for unit, records in grouped.items():
             segments, gaps = self.segmenter.process(unit=unit, records=records)

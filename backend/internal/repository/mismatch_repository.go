@@ -34,6 +34,9 @@ func buildFilter(f models.Filters) bson.M {
 	if f.Type != "" {
 		filter["mismatch_type"] = f.Type
 	}
+	if f.TransactionID != "" {
+		filter["transaction_id"] = f.TransactionID
+	}
 	if f.Start != nil || f.End != nil {
 		dateFilter := bson.M{}
 		if f.Start != nil {
@@ -57,11 +60,11 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 			"_id":            nil,
 			"totalTollSpend": bson.M{"$sum": "$billed_amount"},
 			"mismatchCount": bson.M{
-				"$sum": bson.M{"$cond": bson.A{bson.M{"$ne": bson.A{"$mismatch_type", "reconciled"}}, 1, 0}},
+				"$sum": bson.M{"$cond": bson.A{bson.M{"$ne": bson.A{"$mismatch_type", "matched"}}, 1, 0}},
 			},
 			"mismatchAmount": bson.M{
 				"$sum": bson.M{"$cond": bson.A{
-					bson.M{"$ne": bson.A{"$mismatch_type", "reconciled"}},
+					bson.M{"$ne": bson.A{"$mismatch_type", "matched"}},
 					bson.M{"$abs": "$delta_amount"},
 					0,
 				}},
@@ -103,7 +106,7 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 func (r *MismatchRepository) getTopType(ctx context.Context, filter bson.M) (string, error) {
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
-		{{Key: "$match", Value: bson.M{"mismatch_type": bson.M{"$ne": "reconciled"}}}},
+		{{Key: "$match", Value: bson.M{"mismatch_type": bson.M{"$ne": "matched"}}}},
 		{{Key: "$group", Value: bson.M{"_id": "$mismatch_type", "count": bson.M{"$sum": 1}}}},
 		{{Key: "$sort", Value: bson.M{"count": -1}}},
 		{{Key: "$limit", Value: 1}},
@@ -188,11 +191,6 @@ func (r *MismatchRepository) TypeCounts(ctx context.Context, f models.Filters) (
 		return nil, err
 	}
 	if results == nil {
-		// A nil Go slice marshals to JSON `null`, not `[]`. This was the
-		// exact site of the reported crash: frontend code calling
-		// .reduce() on the breakdown array would throw when this endpoint
-		// returned zero rows (which happened on every date-filtered query,
-		// since entry_time didn't exist on mismatches at all until now).
 		results = []models.TypeCount{}
 	}
 	return results, nil

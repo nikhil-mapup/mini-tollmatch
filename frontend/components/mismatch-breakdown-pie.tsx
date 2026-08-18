@@ -7,14 +7,14 @@ import { EmptyState } from "@/components/empty-state";
 // Relabeled from the original product's "by Invoice Status" — that requires
 // a dispute/refund lifecycle (Disputed/Refunded/Denied/etc) that doesn't
 // exist anywhere in this pipeline. This shows the real breakdown we do
-// have: mismatch_type, including "reconciled" for the clean invoices.
+// have: mismatch_type, including "" for the clean invoices.
 const COLORS: Record<string, string> = {
-  reconciled: "#3D8361", // moss-500
-  max_toll: "#E3A008", // caution-500
-  misread: "#A6402C", // brick-500
-  duplicate: "#8E3524", // brick-600
-  unmatched: "#9CA3AF", // neutral gray
-  unassigned: "#D1D5DB", // lighter neutral gray
+  matched: "#3D8361",
+  max_toll: "#E3A008",
+  misread: "#A6402C",
+  duplicate: "#8E3524",
+  no_gps_confirmation: "#9CA3AF",
+  unassigned: "#D1D5DB",
 };
 
 function labelFor(type: string): string {

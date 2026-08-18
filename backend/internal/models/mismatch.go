@@ -24,11 +24,29 @@ type Mismatch struct {
 // through service -> repository unchanged. Every handler that accepts
 // unit/date filtering uses this same struct — one shape, not four
 // slightly-different ones per endpoint.
+//
+// TransactionID and Type (mismatch type) live directly on `mismatches`,
+// so they're safe to apply generically (see buildFilter in
+// mismatch_repository.go) — Type already existed and already does exact
+// match-type filtering; it just was never exposed on the invoices page UI.
+// TagNo only exists on invoice_raw and requires the $lookup that only
+// InvoiceViewRepository performs — it's deliberately NOT applied in the
+// shared buildFilter(), only inside that repository, after the join.
+//
+// Start/End are deliberately reinterpreted per endpoint rather than always
+// meaning "entry_time": the dashboard's cards filter by entry_time (via
+// buildFilter, unchanged), but InvoiceViewRepository strips that and
+// re-applies Start/End against invoice.post_date instead, post-lookup —
+// post date is what actually matters for reviewing invoices, not the GPS
+// entry timestamp. A single-day PostDate field was removed entirely once
+// this range covers the same need without a second, redundant control.
 type Filters struct {
-	Unit  string
-	Type  string
-	Start *time.Time
-	End   *time.Time
+	Unit          string
+	Type          string
+	Start         *time.Time
+	End           *time.Time
+	TransactionID string
+	TagNo         string
 }
 
 type SummaryResponse struct {

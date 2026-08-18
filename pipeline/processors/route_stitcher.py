@@ -1,18 +1,14 @@
 from datetime import timedelta
-
 from config.config import (
     ROUTE_STITCH_MAX_GAP_MINUTES,
     ROUTE_STITCH_MAX_DISTANCE_KM,
 )
-
 from models.route_segment import RouteSegment
 from models.trip import PhysicalTrip
-
 from utils.geo import haversine_distance_km
 
 
 class RouteStitcher:
-
     def __init__(self, max_gap_minutes: int = ROUTE_STITCH_MAX_GAP_MINUTES, max_distance_km: float = ROUTE_STITCH_MAX_DISTANCE_KM):
         self.max_gap = timedelta(minutes=max_gap_minutes)
         self.max_distance_km = max_distance_km

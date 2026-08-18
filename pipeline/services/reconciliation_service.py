@@ -10,7 +10,6 @@ from models.mismatch import Mismatch
 from services.toll_location_index import TollLocationIndex
 from utils.geo import haversine_distance_km
 
-
 class ReconciliationService:
 
     def __init__(
@@ -58,7 +57,7 @@ class ReconciliationService:
         toll_point = self.toll_index.lookup(invoice.unit, invoice.toll_loc_name_start)
 
         if toll_point is None or toll_point.start_lat is None or toll_point.start_lng is None:
-            
+
             return Mismatch(
                 transaction_id=invoice.transaction_id,
                 entry_time=invoice.entry_time,
@@ -143,7 +142,7 @@ class ReconciliationService:
 
     def _classify_delta(self, delta: float, billed_amount: float, toll_point, billing_method: str) -> str:
         if abs(delta) <= self.amount_tolerance:
-            return "reconciled"
+            return "matched"
 
         max_reference = toll_point.tag_cost_max if billing_method == "tag" else None
         if max_reference is not None and abs(billed_amount - max_reference) <= self.amount_tolerance:

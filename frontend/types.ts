@@ -124,6 +124,7 @@ export interface InvoiceRow {
   tollClass?: string;
   entryPlaza?: string;
   entryTime: string;
+  postDate?: string;
 }
 
 export interface InvoiceListResponse {
@@ -148,4 +149,6 @@ export interface Filters {
   page?: string;
   tab?: string;
   search?: string;
+  transactionId?: string;
+  tagNo?: string;
 }

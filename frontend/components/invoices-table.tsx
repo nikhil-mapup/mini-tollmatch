@@ -20,7 +20,7 @@ const SORTABLE_COLUMNS: { key: string; label: string }[] = [
 ];
 
 const TYPE_STYLES: Record<string, string> = {
-  reconciled: "bg-moss-100 text-moss-600",
+  matched: "bg-moss-100 text-moss-600",
   max_toll: "bg-caution-100 text-caution-600",
   misread: "bg-brick-100 text-brick-600",
   duplicate: "bg-brick-100 text-brick-600",
@@ -80,6 +80,9 @@ export function InvoicesTable({ data, filters }: { data: InvoiceListResponse; fi
                 Trip details
               </th>
               <th className="whitespace-nowrap px-4 py-2.5 text-left font-display text-xs font-semibold uppercase tracking-wide text-gantry-700">
+                Post Date
+              </th>
+              <th className="whitespace-nowrap px-4 py-2.5 text-left font-display text-xs font-semibold uppercase tracking-wide text-gantry-700">
                 Tag/Plate ID
               </th>
               <th className="whitespace-nowrap px-4 py-2.5 text-left font-display text-xs font-semibold uppercase tracking-wide text-gantry-700">
@@ -134,6 +137,9 @@ export function InvoicesTable({ data, filters }: { data: InvoiceListResponse; fi
                   ) : (
                     <span className="text-ink/30">—</span>
                   )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-ink/80">
+                  {row.postDate ? new Date(row.postDate).toLocaleDateString() : "—"}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-ink/80">{row.tagNo ?? "—"}</td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-ink/80">{row.tollClass ?? "—"}</td>

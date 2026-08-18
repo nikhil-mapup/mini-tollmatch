@@ -9,12 +9,9 @@ import (
 	"tollmatch-backend/internal/models"
 )
 
-// InvoiceViewRepository powers the Invoices table (screenshot 7). It joins
-// `mismatches` against `invoice_raw` to surface tag_no/toll_class/
-// entry_plaza, which only exist on the raw invoice, not the mismatch
-// document. This is intentionally separate from MismatchRepository — that
-// one serves the original dashboard's table; this one serves a richer,
-// enriched view for this specific screen.
+// InvoiceViewRepository powers the Invoices table. It joins `mismatches`
+// against `invoice_raw` to surface tag_no/toll_class/entry_plaza/post_date,
+// which only exist on the raw invoice, not the mismatch document.
 type InvoiceViewRepository struct {
 	mismatches *mongo.Collection
 }
@@ -44,13 +41,27 @@ func (r *InvoiceViewRepository) List(
 	sortField, sortOrder string,
 	page, limit int64,
 ) (models.InvoiceListResponse, error) {
+	// buildFilter() already applies f.Type as an exact mismatch_type match
+	// (existing, shared logic). The tab below is a coarser 3-way split of
+	// the same field — if both are present, the more specific f.Type wins,
+	// applied AFTER the tab switch so it can't be silently overwritten.
 	filter := buildFilter(f)
+
+	// buildFilter() also applies Start/End against `entry_time` (the GPS
+	// crossing time) — correct for the dashboard's cards, but not what
+	// this page needs. Strip it here and re-apply the same Start/End
+	// range against invoice.post_date instead, after the $lookup, since
+	// post date is what actually matters when reviewing invoices.
+	delete(filter, "entry_time")
 
 	switch tab {
 	case TabMatched:
-		filter["mismatch_type"] = "reconciled"
+		filter["mismatch_type"] = "matched"
 	case TabMismatched:
-		filter["mismatch_type"] = bson.M{"$ne": "reconciled"}
+		filter["mismatch_type"] = bson.M{"$ne": "matched"}
+	}
+	if f.Type != "" {
+		filter["mismatch_type"] = f.Type
 	}
 
 	if search != "" {
@@ -68,7 +79,27 @@ func (r *InvoiceViewRepository) List(
 		sortField = "entry_time"
 	}
 
-	basePipeline := mongo.Pipeline{
+	// TagNo and the post_date range can only be filtered AFTER the
+	// $lookup, since neither field exists on `mismatches` itself.
+	// Building this as a separate post-lookup match stage, rather than
+	// folding it into `filter` above, keeps that distinction explicit
+	// rather than accidental.
+	postLookupMatch := bson.M{}
+	if f.TagNo != "" {
+		postLookupMatch["invoice.tag_no"] = f.TagNo
+	}
+	if f.Start != nil || f.End != nil {
+		dateFilter := bson.M{}
+		if f.Start != nil {
+			dateFilter["$gte"] = *f.Start
+		}
+		if f.End != nil {
+			dateFilter["$lte"] = *f.End
+		}
+		postLookupMatch["invoice.post_date"] = dateFilter
+	}
+
+	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
 		{{Key: "$lookup", Value: bson.M{
 			"from":         "invoice_raw",
@@ -78,34 +109,41 @@ func (r *InvoiceViewRepository) List(
 		}}},
 		{{Key: "$unwind", Value: bson.M{"path": "$invoice", "preserveNullAndEmptyArrays": true}}},
 	}
-
-	// Count against the same $match (pre-lookup filter is sufficient for
-	// counting — the lookup only adds fields, never removes documents
-	// since preserveNullAndEmptyArrays keeps unmatched invoice_raw joins).
-	total, err := r.mismatches.CountDocuments(ctx, filter)
-	if err != nil {
-		return models.InvoiceListResponse{}, err
+	if len(postLookupMatch) > 0 {
+		pipeline = append(pipeline, bson.D{{Key: "$match", Value: postLookupMatch}})
 	}
 
-	pipeline := append(basePipeline,
-		bson.D{{Key: "$sort", Value: bson.D{{Key: sortField, Value: order}}}},
-		bson.D{{Key: "$skip", Value: (page - 1) * limit}},
-		bson.D{{Key: "$limit", Value: limit}},
-		bson.D{{Key: "$project", Value: bson.M{
-			"transactionId": "$transaction_id",
-			"unit":          "$unit",
-			"tollsPaid":     "$billed_amount",
-			"expected":      "$expected_amount",
-			"overpaid":      "$delta_amount",
-			"matchType":     "$mismatch_type",
-			"status":        "$status",
-			"tripId":        "$trip_id",
-			"entryTime":     "$entry_time",
-			"tagNo":         "$invoice.tag_no",
-			"tollClass":     "$invoice.toll_class",
-			"entryPlaza":    "$invoice.entry_plaza",
-		}}},
-	)
+	// A $facet computing count and the paginated page in ONE aggregation
+	// call. This replaced a simpler pre-lookup CountDocuments() call —
+	// that shortcut was only ever correct because no filter previously
+	// depended on the joined invoice_raw data. Now that TagNo/PostDate
+	// filters can exclude documents AFTER the join, counting before the
+	// join would silently overcount whenever either filter is active.
+	pipeline = append(pipeline, bson.D{{Key: "$facet", Value: bson.M{
+		"data": bson.A{
+			bson.M{"$sort": bson.D{{Key: sortField, Value: order}}},
+			bson.M{"$skip": (page - 1) * limit},
+			bson.M{"$limit": limit},
+			bson.M{"$project": bson.M{
+				"transactionId": "$transaction_id",
+				"unit":          "$unit",
+				"tollsPaid":     "$billed_amount",
+				"expected":      "$expected_amount",
+				"overpaid":      "$delta_amount",
+				"matchType":     "$mismatch_type",
+				"status":        "$status",
+				"tripId":        "$trip_id",
+				"entryTime":     "$entry_time",
+				"tagNo":         "$invoice.tag_no",
+				"tollClass":     "$invoice.toll_class",
+				"entryPlaza":    "$invoice.entry_plaza",
+				"postDate":      "$invoice.post_date",
+			}},
+		},
+		"totalCount": bson.A{
+			bson.M{"$count": "count"},
+		},
+	}}})
 
 	cursor, err := r.mismatches.Aggregate(ctx, pipeline)
 	if err != nil {
@@ -113,12 +151,25 @@ func (r *InvoiceViewRepository) List(
 	}
 	defer cursor.Close(ctx)
 
-	var items []models.InvoiceRow
-	if err := cursor.All(ctx, &items); err != nil {
+	var facetResult []struct {
+		Data       []models.InvoiceRow `bson:"data"`
+		TotalCount []struct {
+			Count int64 `bson:"count"`
+		} `bson:"totalCount"`
+	}
+	if err := cursor.All(ctx, &facetResult); err != nil {
 		return models.InvoiceListResponse{}, err
 	}
-	if items == nil {
-		items = []models.InvoiceRow{}
+
+	items := []models.InvoiceRow{}
+	var total int64
+	if len(facetResult) > 0 {
+		if facetResult[0].Data != nil {
+			items = facetResult[0].Data
+		}
+		if len(facetResult[0].TotalCount) > 0 {
+			total = facetResult[0].TotalCount[0].Count
+		}
 	}
 
 	return models.InvoiceListResponse{Items: items, Total: total, Page: page, Limit: limit}, nil

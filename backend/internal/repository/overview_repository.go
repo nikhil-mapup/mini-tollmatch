@@ -25,7 +25,7 @@ func NewOverviewRepository(mismatches, invoices *mongo.Collection) *OverviewRepo
 // isMismatchCond is the one place "match vs mismatch" is defined as a Mongo
 // expression — every aggregation below that needs this split reuses it, so
 // the definition can never drift between endpoints.
-var isMismatchCond = bson.M{"$ne": bson.A{"$mismatch_type", "reconciled"}}
+var isMismatchCond = bson.M{"$ne": bson.A{"$mismatch_type", "matched"}}
 
 var positiveDeltaCond = bson.M{
 	"$cond": bson.A{bson.M{"$gt": bson.A{"$delta_amount", 0}}, "$delta_amount", 0},
@@ -108,7 +108,7 @@ func (r *OverviewRepository) matchMismatchAmounts(ctx context.Context, filter bs
 	}
 
 	for _, row := range rows {
-		if row.ID == "reconciled" {
+		if row.ID == "matched" {
 			matchAmt += row.Amount
 		} else {
 			mismatchAmt += row.Amount

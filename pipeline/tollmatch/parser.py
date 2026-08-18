@@ -9,7 +9,7 @@ class TollGuruParser:
         summary = response.get("summary", {})
         route = response.get("route", {})
 
-        response_vehicle_type = summary.get("vehicle")
+        response_vehicle_type = summary.get("vehicleType")
         vehicle_type_mismatch = bool(
             response_vehicle_type and response_vehicle_type != requested_vehicle_type
         )

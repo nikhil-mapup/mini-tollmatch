@@ -21,8 +21,6 @@ func main() {
 	}
 	defer mongo.Disconnect(context.Background())
 
-	// Wiring: repository -> service -> handler -> router.
-	// Each layer only depends on the one directly below it.
 	mismatchRepo := repository.NewMismatchRepository(mongo.Collection(db.CollectionMismatches))
 	mismatchService := service.NewMismatchService(mismatchRepo)
 	mismatchHandler := handler.NewMismatchHandler(mismatchService)

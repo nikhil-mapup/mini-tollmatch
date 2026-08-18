@@ -9,7 +9,7 @@ import (
 
 const (
 	defaultInvoicePage  = int64(1)
-	defaultInvoiceLimit = int64(50) // matches the screenshot's "Rows per page: 50"
+	defaultInvoiceLimit = int64(50) 
 	maxInvoiceLimit     = int64(200)
 )
 
@@ -35,10 +35,6 @@ func (s *InvoiceViewService) List(
 ) (models.InvoiceListResponse, error) {
 	tab, ok := validTabs[tabParam]
 	if !ok {
-		// An unrecognized tab (e.g. one of the unsupported lifecycle tabs
-		// from the original product) falls back to "all" rather than
-		// erroring — the frontend only ever sends the three real tabs, but
-		// this keeps the API honest about what it actually supports.
 		tab = repository.TabAll
 	}
 

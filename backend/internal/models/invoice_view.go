@@ -14,18 +14,19 @@ import "time"
 // matching those exactly, decoding would depend on the driver's undocumented
 // default name-mapping behavior instead of an explicit, obvious contract.
 type InvoiceRow struct {
-	TransactionID string    `bson:"transactionId" json:"transactionId"`
-	Unit          string    `bson:"unit" json:"unit"`
-	TollsPaid     float64   `bson:"tollsPaid" json:"tollsPaid"`
-	Expected      *float64  `bson:"expected,omitempty" json:"expected,omitempty"`
-	Overpaid      *float64  `bson:"overpaid,omitempty" json:"overpaid,omitempty"`
-	MatchType     string    `bson:"matchType" json:"matchType"` // the raw mismatch_type value
-	Status        string    `bson:"status" json:"status"`       // open | reconciled — our real status field, not a full lifecycle
-	TripID        *string   `bson:"tripId,omitempty" json:"tripId,omitempty"`
-	TagNo         *string   `bson:"tagNo,omitempty" json:"tagNo,omitempty"`
-	TollClass     *string   `bson:"tollClass,omitempty" json:"tollClass,omitempty"`
-	EntryPlaza    *string   `bson:"entryPlaza,omitempty" json:"entryPlaza,omitempty"`
-	EntryTime     time.Time `bson:"entryTime" json:"entryTime"`
+	TransactionID string     `bson:"transactionId" json:"transactionId"`
+	Unit          string     `bson:"unit" json:"unit"`
+	TollsPaid     float64    `bson:"tollsPaid" json:"tollsPaid"`
+	Expected      *float64   `bson:"expected,omitempty" json:"expected,omitempty"`
+	Overpaid      *float64   `bson:"overpaid,omitempty" json:"overpaid,omitempty"`
+	MatchType     string     `bson:"matchType" json:"matchType"`
+	Status        string     `bson:"status" json:"status"`
+	TripID        *string    `bson:"tripId,omitempty" json:"tripId,omitempty"`
+	TagNo         *string    `bson:"tagNo,omitempty" json:"tagNo,omitempty"`
+	TollClass     *string    `bson:"tollClass,omitempty" json:"tollClass,omitempty"`
+	EntryPlaza    *string    `bson:"entryPlaza,omitempty" json:"entryPlaza,omitempty"`
+	EntryTime     time.Time  `bson:"entryTime" json:"entryTime"`
+	PostDate      *time.Time `bson:"postDate,omitempty" json:"postDate,omitempty"`
 }
 
 type InvoiceListResponse struct {

@@ -4,9 +4,6 @@ import (
 	"log"
 	"os"
 )
-
-// Config holds every environment-driven setting the app needs. One place,
-// nothing scattered across files as os.Getenv calls.
 type Config struct {
 	MongoURI      string
 	MongoDB       string

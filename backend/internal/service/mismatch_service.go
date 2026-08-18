@@ -50,9 +50,6 @@ func (s *MismatchService) ListMismatches(ctx context.Context, f models.Filters, 
 		limit = maxLimit
 	}
 	if !allowedSortFields[sortField] {
-		// Never let an arbitrary client-supplied field reach the database
-		// sort — silently falling back is safer than erroring here, since
-		// an unrecognized sort is a UI bug, not a user-facing failure.
 		sortField = "entry_time"
 	}
 

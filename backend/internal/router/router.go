@@ -33,7 +33,6 @@ func New(
 		api.GET("/mismatch-types", mismatchHandler.GetMismatchTypes)
 		api.GET("/trips", tripHandler.ListTrips)
 
-		// Screenshot-matched dashboard components.
 		api.GET("/overview", overviewHandler.GetOverview)
 		api.GET("/cost-overview", overviewHandler.GetCostOverview)
 		api.GET("/cost-overview/by-cost-center", overviewHandler.GetCostOverviewByCostCenter)

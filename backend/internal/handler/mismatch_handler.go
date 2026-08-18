@@ -28,8 +28,10 @@ func NewMismatchHandler(s *service.MismatchService) *MismatchHandler {
 // represent different underlying queries.
 func parseFilters(c *gin.Context) models.Filters {
 	f := models.Filters{
-		Unit: c.Query("unit"),
-		Type: c.Query("type"),
+		Unit:          c.Query("unit"),
+		Type:          c.Query("type"),
+		TransactionID: c.Query("transactionId"),
+		TagNo:         c.Query("tagNo"),
 	}
 
 	if start := c.Query("start"); start != "" {

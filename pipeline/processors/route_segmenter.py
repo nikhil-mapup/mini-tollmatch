@@ -10,29 +10,7 @@ from models.gps_gap import GPSGap
 from models.route_segment import RouteSegment
 from utils.geo import haversine_distance_km
 
-
 class RouteSegmenter:
-    """
-    Splits a unit's sorted GPS pings into trip segments using TWO
-    independent signals, not one:
-
-      1. TIME GAP — the device stopped transmitting for longer than
-         gap_threshold. This is the original check, unchanged: if the
-         device goes silent, that's a trip boundary.
-
-      2. DWELL — the device kept transmitting, but the vehicle stopped
-         MOVING for longer than dwell_threshold (positions all within
-         dwell_radius_km of each other). This is the fix for the bug
-         where a full week collapsed into one trip: a device that pings
-         every ~60 seconds around the clock, including overnight while
-         parked, never produces a time gap large enough to trigger signal
-         #1 — but it very clearly produces a long stationary period, which
-         signal #2 catches.
-
-    Points inside a qualifying dwell period are excluded from both the
-    segment before and after it — they represent the vehicle at rest, not
-    part of any trip.
-    """
 
     def __init__(
         self,
@@ -95,10 +73,6 @@ class RouteSegmenter:
             # --- Signal 2: dwell (device kept reporting, vehicle stopped moving) ---
             dwell_end_index = self._find_dwell_end(records, i)
             if dwell_end_index is not None:
-                # Everything gathered so far (up to and including
-                # previous_record) is one completed segment — the dwell
-                # period itself is excluded entirely, not attached to
-                # either side.
                 if current_points:
                     segments.append(self._create_segment(unit=unit, points=current_points, route_number=route_number))
                     route_number += 1

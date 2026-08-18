@@ -1,8 +1,5 @@
 "use client";
 
-// Next.js requires error.tsx to be a client component. Catches any thrown
-// error from page.tsx (e.g. the Go API being unreachable) so a backend
-// outage shows a real message instead of a blank/broken page.
 export default function Error({
   error,
   reset,

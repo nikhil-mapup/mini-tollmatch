@@ -18,7 +18,7 @@ class TollMatchClient:
 
         params = {
             'mapProvider': 'osrm',
-            'vehicle': '{"type":"5AxlesTruck"}'
+            'vehicle': '{"type":"2AxlesTruck"}'
             # "vehicle": json.dumps({"type": "5AxlesTruck"})
         }
         print(f"Sending request to TollGuru API at {url} with params: {params} and CSV file: {csv_path}")
