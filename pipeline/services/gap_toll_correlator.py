@@ -20,6 +20,7 @@ class GapTollCorrelator:
 
     def _nearest_toll_within_range(self, gap: GPSGap):
         candidates = self.toll_index.all_points_for_unit(gap.unit)
+        best = None
         for point in candidates:
             if point.start_lat is None or point.start_lng is None:
                 continue
@@ -29,6 +30,8 @@ class GapTollCorrelator:
             dist_after = haversine_distance_km(
                 gap.next_latitude, gap.next_longitude, point.start_lat, point.start_lng
             )
-            if dist_before <= self.distance_km or dist_after <= self.distance_km:
-                return point
-        return None
+            distance = min(dist_before, dist_after)
+            if distance <= self.distance_km:
+                if best is None or distance < best["distance"]:
+                    best = {"distance": distance, "point": point}
+        return best

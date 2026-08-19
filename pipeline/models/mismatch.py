@@ -10,7 +10,8 @@ class Mismatch(BaseModel):
     unit: str
     trip_id: Optional[str] = None  # None when no trip could be matched at all
 
-    mismatch_type: str
+    verdict: str
+    reason_code: Optional[str] = None
     # unassigned | unmatched | duplicate | max_toll | misread | reconciled
 
     # Copied from the invoice at creation time. Required for date-range

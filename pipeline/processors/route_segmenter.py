@@ -9,6 +9,7 @@ from models.gps import GPSRecord
 from models.gps_gap import GPSGap
 from models.route_segment import RouteSegment
 from utils.geo import haversine_distance_km
+from processors.route_trip_stats import TripBuildStats
 
 class RouteSegmenter:
 
@@ -20,9 +21,16 @@ class RouteSegmenter:
     ):
         self.gap_threshold = timedelta(minutes=gap_threshold_minutes)
         self.dwell_radius_km = dwell_radius_km
-        self.dwell_threshold = timedelta(minutes=dwell_threshold_minutes)
+        self.dwell_threshold_minutes = timedelta(minutes=dwell_threshold_minutes)
+        self.dwell_15_30 = 0
+        self.dwell_30_60 = 0
+        self.dwell_60_120 = 0
+        self.dwell_120_240 = 0
+        self.dwell_240_plus = 0
 
-    def process(self, unit: str, records: list[GPSRecord]) -> tuple[list[RouteSegment], list[GPSGap]]:
+        self.dwell_durations = []
+
+    def process(self, unit: str, records: list[GPSRecord], stats: TripBuildStats | None = None) -> tuple[list[RouteSegment], list[GPSGap]]:
         if not records:
             return [], []
 
@@ -49,7 +57,16 @@ class RouteSegmenter:
 
             # --- Signal 1: time gap (device went silent) ---
             gap = record.gps_timestamp - previous_record.gps_timestamp
+            
             if gap > self.gap_threshold:
+                if stats:
+                    stats.time_gap_splits += 1
+
+                    gap_minutes = gap.total_seconds() / 60
+                    stats.largest_gap_minutes = max(
+                        stats.largest_gap_minutes,
+                        gap_minutes,
+                    )
                 gaps.append(GPSGap(
                     unit=unit,
                     previous_timestamp=previous_record.gps_timestamp,
@@ -63,7 +80,7 @@ class RouteSegmenter:
                     route_split=True,
                 ))
                 if current_points:
-                    segments.append(self._create_segment(unit=unit, points=current_points, route_number=route_number))
+                    segments.append(self._create_segment(unit=unit, points=current_points, route_number=route_number, boundary_reason="gps_gap"))
                     route_number += 1
                 current_points = [record]
                 previous_record = record
@@ -71,14 +88,38 @@ class RouteSegmenter:
                 continue
 
             # --- Signal 2: dwell (device kept reporting, vehicle stopped moving) ---
-            dwell_end_index = self._find_dwell_end(records, i)
-            if dwell_end_index is not None:
+            dwell_result = self._find_dwell_end(
+                records,
+                i,
+            )
+
+            if dwell_result is not None:
+
+                dwell_end_index, dwell_duration_minutes = dwell_result
+
+                # Keep the dwell GPS points in the current segment.
+                dwell_points = records[i:dwell_end_index + 1]
+
+                current_points.extend(dwell_points)
+
                 if current_points:
-                    segments.append(self._create_segment(unit=unit, points=current_points, route_number=route_number))
+                    segments.append(
+                        self._create_segment(
+                            unit=unit,
+                            points=current_points,
+                            route_number=route_number,
+                            boundary_reason="dwell",
+                            boundary_duration_minutes=dwell_duration_minutes,
+                        )
+                    )
+
                     route_number += 1
+
                 current_points = []
+
                 i = dwell_end_index + 1
                 previous_record = None
+
                 continue
 
             current_points.append(record)
@@ -87,39 +128,56 @@ class RouteSegmenter:
 
         if current_points:
             segments.append(self._create_segment(unit=unit, points=current_points, route_number=route_number))
+            
+        if stats:
+            stats.segments += len(segments)
 
         return segments, gaps
 
-    def _find_dwell_end(self, records: list[GPSRecord], start_index: int) -> int | None:
-        """
-        Scans forward from start_index while each point stays within
-        dwell_radius_km of the anchor point (records[start_index]).
-        Returns the index of the last point in that stationary run IF the
-        elapsed time across the run meets dwell_threshold — otherwise
-        returns None (not a qualifying dwell, e.g. a brief traffic stop).
-        """
+    def _find_dwell_end(
+        self,
+        records: list[GPSRecord],
+        start_index: int,
+    ) -> tuple[int, float] | None:
+
         anchor = records[start_index]
         j = start_index
 
         while j + 1 < len(records):
+
             candidate = records[j + 1]
+
             distance = haversine_distance_km(
-                anchor.latitude, anchor.longitude,
-                candidate.latitude, candidate.longitude,
+                anchor.latitude,
+                anchor.longitude,
+                candidate.latitude,
+                candidate.longitude,
             )
+
             if distance > self.dwell_radius_km:
                 break
+
             j += 1
 
         if j == start_index:
             return None
 
-        duration = records[j].gps_timestamp - anchor.gps_timestamp
-        if duration >= self.dwell_threshold:
-            return j
+        duration = (
+            records[j].gps_timestamp
+            - anchor.gps_timestamp
+        )
+
+        if duration >= self.dwell_threshold_minutes:
+
+            duration_minutes = (
+                duration.total_seconds() / 60
+            )
+
+            return j, duration_minutes
+
         return None
 
-    def _create_segment(self, unit: str, points: list[GPSRecord], route_number: int) -> RouteSegment:
+    def _create_segment(self, unit: str, points: list[GPSRecord], route_number: int, boundary_reason: str | None = None, boundary_duration_minutes: float | None = None,) -> RouteSegment:
         return RouteSegment(
             route_id=(
                 f"ROUTE-{unit}-{route_number:04d}"
@@ -133,4 +191,6 @@ class RouteSegmenter:
             end_longitude=points[-1].longitude,
             gps_point_count=len(points),
             gps_points=points,
+            boundary_reason=boundary_reason,
+            boundary_duration_minutes=boundary_duration_minutes,
         )

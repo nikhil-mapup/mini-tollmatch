@@ -4,6 +4,7 @@ from config.config import (
     GPS_FILE, INVOICE_FILE, SELECTED_UNITS, WINDOW_START, WINDOW_END,
     TOLLMATCH_API_URL, TOLLMATCH_API_KEY, OUTPUT_DIR,
 )
+import statistics
 from config import constants
 from readers.gps_reader import GPSReader
 from readers.invoice_reader import InvoiceReader
@@ -28,6 +29,7 @@ from tollmatch.client import TollMatchClient
 from tollmatch.csv_exporter import TripCSVExporter
 from tollmatch.parser import TollGuruParser
 from tollmatch.reconciliation_csv_exporter import ReconciliationCSVExporter
+from processors.route_trip_stats import TripBuildStats
 
 def main():
     run_id = f"{datetime.now(timezone.utc).isoformat()}_{uuid.uuid4().hex[:8]}"
@@ -64,9 +66,69 @@ def main():
         route_repository=route_repository, gap_repository=gap_repository,
         trip_repository=trip_repository, trip_point_repository=trip_point_repository,
     )
+    trip_stats = TripBuildStats()
+    trips, gaps = route_trip_service.process(valid_gps, stats=trip_stats)
+    print("\n=== Trip Reconstruction Diagnostics ===")
 
-    trips, gaps = route_trip_service.process(valid_gps)
-    print(f"Physical trips created: {len(trips)}, GPS gaps detected: {len(gaps)}")
+    durations = route_trip_service.segmenter.dwell_durations
+
+    if durations:
+        print("\n=== Dwell Statistics ===")
+        
+        print(
+            f"15-30 min:   "
+            f"{route_trip_service.segmenter.dwell_15_30}"
+        )
+
+        print(
+            f"30-60 min:   "
+            f"{route_trip_service.segmenter.dwell_30_60}"
+        )
+
+        print(
+            f"60-120 min:  "
+            f"{route_trip_service.segmenter.dwell_60_120}"
+        )
+
+        print(
+            f"120-240 min: "
+            f"{route_trip_service.segmenter.dwell_120_240}"
+        )
+
+        print(
+            f"240+ min:    "
+            f"{route_trip_service.segmenter.dwell_240_plus}"
+        )
+
+        print(
+            f"Count:   {len(durations)}"
+        )
+
+        print(
+            f"Average: {statistics.mean(durations):.2f} min"
+        )
+
+        print(
+            f"Median:  {statistics.median(durations):.2f} min"
+        )
+
+        sorted_durations = sorted(durations)
+
+        p90_index = int(0.90 * len(sorted_durations))
+        p95_index = int(0.95 * len(sorted_durations))
+        p99_index = int(0.99 * len(sorted_durations))
+
+        print(
+            f"P90:     {sorted_durations[p90_index]:.2f} min"
+        )
+
+        print(
+            f"P95:     {sorted_durations[p95_index]:.2f} min"
+        )
+
+        print(
+            f"P99:     {sorted_durations[p99_index]:.2f} min"
+        )
 
     print("\n=== Step 2: toll detection + calculation (TollGuru) ===")
     sdk_result_repository = SDKResultRepository(mongo.get_collection(constants.SDK_RESULTS))
@@ -129,7 +191,7 @@ def main():
 
     type_counts = {}
     for m in mismatches:
-        type_counts[m.mismatch_type] = type_counts.get(m.mismatch_type, 0) + 1
+        type_counts[m.verdict] = type_counts.get(m.verdict, 0) + 1
     print(f"Mismatch breakdown: {type_counts}")
 
     output_path = OUTPUT_DIR / "reconciliation.csv"

@@ -15,7 +15,14 @@ class TollGuruParser:
         )
 
         toll_points = [
-            self._parse_toll_point(toll) for toll in route.get("tolls", [])
+            self._parse_toll_point(
+                toll=toll,
+                trip_id=trip_id,
+                requested_vehicle_type=requested_vehicle_type,
+                response_vehicle_type=response_vehicle_type,
+                vehicle_type_mismatch=vehicle_type_mismatch,
+            )
+            for toll in route.get("tolls", [])
         ]
 
         distance = route.get("distance", {})
@@ -38,7 +45,14 @@ class TollGuruParser:
             toll_points=toll_points,
         )
 
-    def _parse_toll_point(self, toll: dict) -> ExpectedTollPoint:
+    def _parse_toll_point(
+        self,
+        toll: dict,
+        trip_id: str,
+        requested_vehicle_type: str,
+        response_vehicle_type: str | None,
+        vehicle_type_mismatch: bool,
+    ) -> ExpectedTollPoint:
         start = toll.get("start", toll)
         arrival = start.get("arrival", {})
         arrival_time = None
@@ -51,16 +65,27 @@ class TollGuruParser:
         agency_names = toll.get("tollAgencyNames") or []
 
         return ExpectedTollPoint(
+            sdk_trip_id=trip_id,
+
             name=start.get("name") or toll.get("name"),
             road=start.get("road") or toll.get("road"),
             agency=agency_names[0] if agency_names else None,
             state=start.get("state") or toll.get("state"),
+
             start_lat=start.get("lat"),
             start_lng=start.get("lng"),
             arrival_time=arrival_time,
+
             tag_cost=toll.get("tagCost"),
             tag_cost_min=toll.get("tagCostMin"),
             tag_cost_max=toll.get("tagCostMax"),
-            license_plate_cost=toll.get("licensePlateCost") or toll.get("licensePlateCostMax"),
+            license_plate_cost=(
+                toll.get("licensePlateCost")
+                or toll.get("licensePlateCostMax")
+            ),
             cash_cost=toll.get("cashCost"),
+
+            requested_vehicle_type=requested_vehicle_type,
+            response_vehicle_type=response_vehicle_type,
+            vehicle_type_valid=not vehicle_type_mismatch,
         )

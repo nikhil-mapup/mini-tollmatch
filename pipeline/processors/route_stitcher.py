@@ -2,18 +2,22 @@ from datetime import timedelta
 from config.config import (
     ROUTE_STITCH_MAX_GAP_MINUTES,
     ROUTE_STITCH_MAX_DISTANCE_KM,
+    TRIP_BREAK_DWELL_MINUTES,
 )
 from models.route_segment import RouteSegment
 from models.trip import PhysicalTrip
 from utils.geo import haversine_distance_km
+from processors.route_trip_stats import TripBuildStats
 
 
 class RouteStitcher:
-    def __init__(self, max_gap_minutes: int = ROUTE_STITCH_MAX_GAP_MINUTES, max_distance_km: float = ROUTE_STITCH_MAX_DISTANCE_KM):
+    def __init__(self, max_gap_minutes: int = ROUTE_STITCH_MAX_GAP_MINUTES, max_distance_km: float = ROUTE_STITCH_MAX_DISTANCE_KM, trip_break_dwell_minutes: int = TRIP_BREAK_DWELL_MINUTES,):
         self.max_gap = timedelta(minutes=max_gap_minutes)
         self.max_distance_km = max_distance_km
+        self.trip_break_dwell_minutes = trip_break_dwell_minutes
+        
 
-    def process(self, unit: str, segments: list[RouteSegment]) -> list[PhysicalTrip]:
+    def process(self, unit: str, segments: list[RouteSegment], stats: TripBuildStats | None = None) -> list[PhysicalTrip]:
         if not segments:
             return []
 
@@ -30,16 +34,52 @@ class RouteStitcher:
                 segment.start_latitude,
                 segment.start_longitude,
             )
-            can_stitch = time_gap <= self.max_gap and distance <= self.max_distance_km
+            if previous.boundary_reason == "gps_gap":
+
+                can_stitch = False
+
+            # A dwell is different from a GPS outage.
+            elif previous.boundary_reason == "dwell":
+
+                dwell_minutes = (
+                    previous.boundary_duration_minutes
+                )
+
+                can_stitch = (
+                    dwell_minutes is not None
+                    and dwell_minutes < self.trip_break_dwell_minutes
+                    and distance <= self.max_distance_km
+                )
+
+            else:
+
+                can_stitch = (
+                    time_gap <= self.max_gap
+                    and distance <= self.max_distance_km
+                )
 
             if can_stitch:
                 current_segments.append(segment)
             else:
+                if stats:
+
+                    if time_gap > self.max_gap:
+                        stats.stitch_rejections_time += 1
+
+                    if distance > self.max_distance_km:
+                        stats.stitch_rejections_distance += 1
+
+                    stats.largest_stitch_distance_km = max(
+                        stats.largest_stitch_distance_km,
+                        distance,
+                    )
                 trips.append(self._create_trip(unit=unit, segments=current_segments))
                 current_segments = [segment]
 
         # Final trip
         trips.append(self._create_trip(unit=unit, segments=current_segments))
+        if stats:
+            stats.trips += len(trips)
         return trips
 
     def _create_trip(self, unit: str, segments: list[RouteSegment]) -> PhysicalTrip:

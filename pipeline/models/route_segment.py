@@ -26,3 +26,5 @@ class RouteSegment(BaseModel):
     gps_point_count: int
 
     gps_points: list[GPSRecord]
+    boundary_reason: str | None = None
+    boundary_duration_minutes: float | None = None

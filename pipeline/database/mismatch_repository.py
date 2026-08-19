@@ -7,7 +7,7 @@ class MismatchRepository:
         self.collection = collection
         self.collection.create_index([("transaction_id", 1)], unique=True)
         self.collection.create_index([("status", 1)])
-        self.collection.create_index([("mismatch_type", 1)])
+        self.collection.create_index([("verdict", 1)])
 
     def save(self, mismatch: Mismatch):
         document = mismatch.model_dump(mode="python")
