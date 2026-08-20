@@ -22,6 +22,19 @@ func NewMismatchRepository(collection *mongo.Collection) *MismatchRepository {
 	return &MismatchRepository{collection: collection}
 }
 
+// verdictLevelTypes covers every value that actually lives on `verdict`,
+// not `mismatch_type`, under the new schema. Only "misread", "unmatched",
+// and "max_toll" are real mismatch_type values now — "matched",
+// "unassigned", "duplicate", and "insufficient_gps" are all top-level
+// verdicts. Filtering by any of the latter against mismatch_type would
+// silently match nothing, since that field is null/absent for all of them.
+var verdictLevelTypes = map[string]bool{
+	"matched":          true,
+	"unassigned":       true,
+	"duplicate":        true,
+	"insufficient_gps": true,
+}
+
 // buildFilter turns Filters into a bson.M once, shared by every query below
 // — the summary and the list must apply IDENTICAL filtering, or the cards
 // and table could show numbers for different underlying data.
@@ -32,7 +45,11 @@ func buildFilter(f models.Filters) bson.M {
 		filter["unit"] = f.Unit
 	}
 	if f.Type != "" {
-		filter["mismatch_type"] = f.Type
+		if verdictLevelTypes[f.Type] {
+			filter["verdict"] = f.Type
+		} else {
+			filter["mismatch_type"] = f.Type
+		}
 	}
 	if f.TransactionID != "" {
 		filter["transaction_id"] = f.TransactionID
@@ -60,14 +77,17 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 			"_id":            nil,
 			"totalTollSpend": bson.M{"$sum": "$billed_amount"},
 			"mismatchCount": bson.M{
-				"$sum": bson.M{"$cond": bson.A{bson.M{"$ne": bson.A{"$mismatch_type", "matched"}}, 1, 0}},
+				"$sum": bson.M{"$cond": bson.A{bson.M{"$in": bson.A{"$verdict", models.ConfirmedProblemVerdicts}}, 1, 0}},
 			},
 			"mismatchAmount": bson.M{
 				"$sum": bson.M{"$cond": bson.A{
-					bson.M{"$ne": bson.A{"$mismatch_type", "matched"}},
+					bson.M{"$in": bson.A{"$verdict", models.ConfirmedProblemVerdicts}},
 					bson.M{"$abs": "$delta_amount"},
 					0,
 				}},
+			},
+			"unconfirmedCount": bson.M{
+				"$sum": bson.M{"$cond": bson.A{bson.M{"$in": bson.A{"$verdict", models.UnconfirmedVerdicts}}, 1, 0}},
 			},
 		}}},
 	}
@@ -79,9 +99,10 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 	defer cursor.Close(ctx)
 
 	var results []struct {
-		TotalTollSpend float64 `bson:"totalTollSpend"`
-		MismatchCount  int64   `bson:"mismatchCount"`
-		MismatchAmount float64 `bson:"mismatchAmount"`
+		TotalTollSpend   float64 `bson:"totalTollSpend"`
+		MismatchCount    int64   `bson:"mismatchCount"`
+		MismatchAmount   float64 `bson:"mismatchAmount"`
+		UnconfirmedCount int64   `bson:"unconfirmedCount"`
 	}
 	if err := cursor.All(ctx, &results); err != nil {
 		return models.SummaryResponse{}, err
@@ -92,6 +113,7 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 		summary.TotalTollSpend = results[0].TotalTollSpend
 		summary.MismatchCount = results[0].MismatchCount
 		summary.MismatchAmount = results[0].MismatchAmount
+		summary.UnconfirmedCount = results[0].UnconfirmedCount
 	}
 
 	topType, err := r.getTopType(ctx, filter)
@@ -103,11 +125,23 @@ func (r *MismatchRepository) GetSummary(ctx context.Context, f models.Filters) (
 	return summary, nil
 }
 
+// getTopType groups by the "effective category" — mismatch_type when the
+// verdict is a confirmed mismatch, otherwise the verdict itself — so
+// "unassigned", "insufficient_gps", and "duplicate" (all verdicts, not
+// mismatch_type values in the new schema) show up correctly instead of
+// being invisible to a query that only ever looked at mismatch_type.
 func (r *MismatchRepository) getTopType(ctx context.Context, filter bson.M) (string, error) {
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
-		{{Key: "$match", Value: bson.M{"mismatch_type": bson.M{"$ne": "matched"}}}},
-		{{Key: "$group", Value: bson.M{"_id": "$mismatch_type", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$match", Value: bson.M{"verdict": bson.M{"$ne": "matched"}}}},
+		{{Key: "$group", Value: bson.M{
+			"_id": bson.M{"$cond": bson.A{
+				bson.M{"$eq": bson.A{"$verdict", "mismatch"}},
+				"$mismatch_type",
+				"$verdict",
+			}},
+			"count": bson.M{"$sum": 1},
+		}}},
 		{{Key: "$sort", Value: bson.M{"count": -1}}},
 		{{Key: "$limit", Value: 1}},
 	}
@@ -171,12 +205,24 @@ func (r *MismatchRepository) DistinctUnits(ctx context.Context) ([]string, error
 	return units, nil
 }
 
+// TypeCounts groups by the "effective category" (see getTopType above) so
+// the breakdown includes every real outcome the pipeline can produce —
+// matched, duplicate, unassigned, insufficient_gps, and the three
+// mismatch_type values — not just whatever happened to be non-null in
+// mismatch_type.
 func (r *MismatchRepository) TypeCounts(ctx context.Context, f models.Filters) ([]models.TypeCount, error) {
 	filter := buildFilter(f)
 
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
-		{{Key: "$group", Value: bson.M{"_id": "$mismatch_type", "count": bson.M{"$sum": 1}}}},
+		{{Key: "$group", Value: bson.M{
+			"_id": bson.M{"$cond": bson.A{
+				bson.M{"$eq": bson.A{"$verdict", "mismatch"}},
+				"$mismatch_type",
+				"$verdict",
+			}},
+			"count": bson.M{"$sum": 1},
+		}}},
 		{{Key: "$sort", Value: bson.M{"count": -1}}},
 	}
 

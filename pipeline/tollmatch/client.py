@@ -1,7 +1,6 @@
 from pathlib import Path
-from datetime import datetime
 
-from pydantic import json
+import json
 import requests
 
 
@@ -13,48 +12,38 @@ class TollMatchClient:
 
     def calculate_toll(self, csv_path: Path, vehicle_type: str) -> dict:
         url = f"{self.api_url}/gps-tracks-csv-upload-intermediate"
-
         headers = {"x-api-key": self.api_key, "Content-Type": "text/csv"}
-
         params = {
-            'mapProvider': 'osrm',
-            'vehicle': '{"type":"2AxlesTruck"}'
-            # "vehicle": json.dumps({"type": "5AxlesTruck"})
+            "mapProvider": "osrm",
+            "vehicle": json.dumps({"type": vehicle_type}),
         }
-        print(f"Sending request to TollGuru API at {url} with params: {params} and CSV file: {csv_path}")
+
+        print(
+            f"Sending TollGuru request: vehicle={vehicle_type}, "
+            f"csv={csv_path.name}"
+        )
 
         with csv_path.open("rb") as file:
             response = requests.post(
                 url,
                 headers=headers,
                 params=params,
-                data=file.read(),
-                # timeout=self.timeout,
+                data=file,
+                timeout=self.timeout,
             )
-        print(f"TollGuru API status: {response.status_code}")
-        print(f"TollGuru API response body: {response.text}")
 
+        print(f"TollGuru API status: {response.status_code}")
 
         if not response.ok:
             raise RuntimeError(
-                "TollGuru API failed: "
-                f"{response.status_code} "
-                f"{response.text}"
+                f"TollGuru API failed: {response.status_code} {response.text}"
             )
 
         result = response.json()
-
-        warnings = result.get("warnings", [])
-        if warnings:
-            print(f"TollGuru returned warnings for {csv_path.name}: {warnings}")
-
         returned_vehicle_type = result.get("summary", {}).get("vehicleType")
         if returned_vehicle_type and returned_vehicle_type != vehicle_type:
             print(
-                f"WARNING: requested vehicleType='{vehicle_type}' but response "
-                f"summary reports vehicleType='{returned_vehicle_type}' — "
-                "the request may not have been honored. Do not trust this "
-                "result's costs as vehicle-class-accurate."
+                f"WARNING: requested={vehicle_type}, "
+                f"response={returned_vehicle_type}"
             )
-
         return result

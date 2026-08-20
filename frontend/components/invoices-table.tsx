@@ -16,7 +16,11 @@ const SORTABLE_COLUMNS: { key: string; label: string }[] = [
   { key: "unit", label: "Unit" },
   { key: "billed_amount", label: "Tolls paid" },
   { key: "delta_amount", label: "Overpaid" },
-  { key: "mismatch_type", label: "Match type" },
+  // Sorts on `verdict`, not `mismatch_type` — mismatch_type is null for
+  // every outcome except "mismatch" itself under the new schema, so
+  // sorting on it would mix nulls with three real values instead of
+  // reflecting the badge actually shown in this column.
+  { key: "verdict", label: "Match type" },
 ];
 
 const TYPE_STYLES: Record<string, string> = {

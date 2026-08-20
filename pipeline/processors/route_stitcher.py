@@ -60,15 +60,16 @@ class RouteStitcher:
 
             if can_stitch:
                 current_segments.append(segment)
+                if stats and previous.boundary_reason == "dwell":
+                    stats.dwell_stitches += 1
             else:
                 if stats:
-
-                    if time_gap > self.max_gap:
+                    if previous.boundary_reason == "dwell":
+                        stats.dwell_trip_breaks += 1
+                    elif time_gap > self.max_gap:
                         stats.stitch_rejections_time += 1
-
                     if distance > self.max_distance_km:
                         stats.stitch_rejections_distance += 1
-
                     stats.largest_stitch_distance_km = max(
                         stats.largest_stitch_distance_km,
                         distance,

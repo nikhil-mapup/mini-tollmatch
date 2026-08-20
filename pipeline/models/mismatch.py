@@ -5,29 +5,35 @@ from pydantic import BaseModel, Field
 
 
 class Mismatch(BaseModel):
-    
     transaction_id: str
-    unit: str
-    trip_id: Optional[str] = None  # None when no trip could be matched at all
+    unit: Optional[str] = None
+    trip_id: Optional[str] = None
 
+    # Top-level business outcome:
+    # matched | mismatch | unassigned | duplicate | insufficient_gps
     verdict: str
+
+    # Only populated for verdict == "mismatch":
+    # misread | unmatched | max_toll
+    mismatch_type: Optional[str] = None
+
     reason_code: Optional[str] = None
-    # unassigned | unmatched | duplicate | max_toll | misread | reconciled
 
-    # Copied from the invoice at creation time. Required for date-range
-    # filtering to work at all — without this field, every date-filtered
-    # query against `mismatches` silently matched zero documents (Mongo
-    # drops documents missing the field being compared), which is what
-    # produced both the "1/1/1" display bug and the null-breakdown crash.
     entry_time: datetime
+    billing_method: Optional[str] = None
 
-    billing_method: Optional[str] = None  # "tag" | "plate" | None
     expected_amount: Optional[float] = None
     billed_amount: float
     delta_amount: Optional[float] = None
 
     matched_toll_point_name: Optional[str] = None
-    time_delta_seconds: Optional[float] = None  # invoice.entry_time vs matched toll's arrival
+    time_delta_seconds: Optional[float] = None
+    gps_distance_km: Optional[float] = None
 
-    status: str = "open"  # open | reconciled
+    inferred_vehicle_type: Optional[str] = None
+    vehicle_type_confidence: Optional[str] = None
+
+    is_duplicate: bool = False
+
+    status: str = "open"
     detected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

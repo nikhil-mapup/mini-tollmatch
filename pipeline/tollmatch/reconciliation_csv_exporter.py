@@ -9,13 +9,19 @@ class ReconciliationCSVExporter:
         "transaction_id",
         "unit",
         "trip_id",
+        "verdict",
         "mismatch_type",
+        "reason_code",
         "billing_method",
         "expected_amount",
         "billed_amount",
         "delta_amount",
         "matched_toll_point_name",
         "time_delta_seconds",
+        "gps_distance_km",
+        "inferred_vehicle_type",
+        "vehicle_type_confidence",
+        "is_duplicate",
         "status",
     ]
 
@@ -24,7 +30,7 @@ class ReconciliationCSVExporter:
         with output_path.open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=self.HEADERS)
             writer.writeheader()
-            for m in mismatches:
-                row = m.model_dump()
-                writer.writerow({k: row.get(k) for k in self.HEADERS})
+            for mismatch in mismatches:
+                row = mismatch.model_dump()
+                writer.writerow({key: row.get(key) for key in self.HEADERS})
         return output_path

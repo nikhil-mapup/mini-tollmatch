@@ -38,13 +38,42 @@ func (r *TripRepository) ListByUnit(ctx context.Context, unit string) ([]models.
 			"foreignField": "trip_id",
 			"as":           "matchedMismatches",
 		}}},
+		// A trip's joined mismatches now include EVERY invoice GPS-confirmed
+		// against it, regardless of outcome — a genuinely correct match
+		// (verdict "matched") also gets trip_id set, since trip_id is
+		// assigned whenever GPS confirms presence, not only on a problem.
+		// $size of the raw join would therefore count "how many invoices
+		// touched this trip", not "how many were actually wrong" — filter
+		// down to confirmed-problem verdicts first.
 		{{Key: "$addFields", Value: bson.M{
-			"mismatchCount": bson.M{"$size": "$matchedMismatches"},
-			"mismatchTypes": bson.M{
-				"$setUnion": bson.A{"$matchedMismatches.mismatch_type", bson.A{}},
-			},
+			"confirmedProblems": bson.M{"$filter": bson.M{
+				"input": "$matchedMismatches",
+				"as":    "m",
+				"cond":  bson.M{"$in": bson.A{"$$m.verdict", bson.A{"mismatch", "duplicate"}}},
+			}},
 		}}},
-		{{Key: "$project", Value: bson.M{"matchedMismatches": 0}}},
+		{{Key: "$addFields", Value: bson.M{
+			"mismatchCount": bson.M{"$size": "$confirmedProblems"},
+			// Effective category per problem record: mismatch_type when
+			// verdict is "mismatch", otherwise the verdict itself
+			// ("duplicate") — same computation used everywhere else in
+			// this API, so a trip's badge here always agrees with what
+			// the invoices table and breakdown pie would show for the
+			// same records.
+			"mismatchTypes": bson.M{"$setUnion": bson.A{
+				bson.M{"$map": bson.M{
+					"input": "$confirmedProblems",
+					"as":    "m",
+					"in": bson.M{"$cond": bson.A{
+						bson.M{"$eq": bson.A{"$$m.verdict", "mismatch"}},
+						"$$m.mismatch_type",
+						"$$m.verdict",
+					}},
+				}},
+				bson.A{},
+			}},
+		}}},
+		{{Key: "$project", Value: bson.M{"matchedMismatches": 0, "confirmedProblems": 0}}},
 	}
 
 	cursor, err := r.collection.Aggregate(ctx, pipeline, options.Aggregate())
