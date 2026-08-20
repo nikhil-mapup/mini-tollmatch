@@ -1,7 +1,10 @@
 import statistics
 import uuid
 from datetime import datetime, timezone
-
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    as_completed,
+)
 from config.config import (
     GPS_FILE,
     INVOICE_FILE,
@@ -156,29 +159,101 @@ def main():
     # IMPORTANT: every run starts fresh from the current physical trips.
     # We intentionally do NOT reuse existing SDK results from Mongo.
     # Each physical trip is evaluated for every configured vehicle type.
-    for trip in trips:
-        print(f"\nTrip: {trip.trip_id}")
+    MAX_SDK_WORKERS = 10
 
-        for vehicle_type in SDK_VEHICLE_TYPES:
-            print(f"  CALL  {vehicle_type}")
+    sdk_tasks = [
+        (trip, vehicle_type)
+        for trip in trips
+        for vehicle_type in SDK_VEHICLE_TYPES
+    ]
+
+    total_sdk_calls = len(sdk_tasks)
+
+    print(
+        f"Physical trips: {len(trips)}"
+    )
+    print(
+        f"Vehicle types: {SDK_VEHICLE_TYPES}"
+    )
+    print(
+        f"Total SDK calls: {total_sdk_calls}"
+    )
+    print(
+        f"SDK workers: {MAX_SDK_WORKERS}"
+    )
+
+
+    def execute_sdk_call(trip, vehicle_type):
+        return toll_service.process_trip(
+            trip,
+            vehicle_type=vehicle_type,
+        )
+
+
+    with ThreadPoolExecutor(
+        max_workers=MAX_SDK_WORKERS
+    ) as executor:
+
+        future_map = {
+            executor.submit(
+                execute_sdk_call,
+                trip,
+                vehicle_type,
+            ): (
+                trip.trip_id,
+                vehicle_type,
+            )
+            for trip, vehicle_type in sdk_tasks
+        }
+
+        completed = 0
+
+        for future in as_completed(
+            future_map
+        ):
+
+            trip_id, vehicle_type = (
+                future_map[future]
+            )
+
+            completed += 1
+
             try:
-                result = toll_service.process_trip(
-                    trip,
-                    vehicle_type=vehicle_type,
+
+                result = future.result()
+
+                # Keep index mutation in the main thread.
+                toll_index.add_result(
+                    result
                 )
-                toll_index.add_result(result)
+
                 sdk_calls += 1
+
+                print(
+                    f"[{completed}/{total_sdk_calls}] "
+                    f"SUCCESS "
+                    f"trip={trip_id} "
+                    f"vehicle={vehicle_type}"
+                )
 
                 if result.vehicle_type_mismatch:
                     print(
-                        f"  WARNING: requested={result.requested_vehicle_type} "
-                        f"response={result.response_vehicle_type}"
+                        f"  WARNING: requested="
+                        f"{result.requested_vehicle_type} "
+                        f"response="
+                        f"{result.response_vehicle_type}"
                     )
+
             except Exception as exc:
+
                 sdk_failures += 1
+
                 print(
-                    f"  SDK failed: trip={trip.trip_id}, "
-                    f"vehicle={vehicle_type}, error={exc}"
+                    f"[{completed}/{total_sdk_calls}] "
+                    f"FAILED "
+                    f"trip={trip_id} "
+                    f"vehicle={vehicle_type}: "
+                    f"{exc}"
                 )
 
     print("\n=== SDK Summary ===")
@@ -235,6 +310,74 @@ def main():
     results = reconciliation_service.reconcile(
         trips=trips,
         invoices=invoice_records,
+    )
+    print("\n=== Amount Diagnostics ===")
+
+    total_paid = 0.0
+    total_expected = 0.0
+    total_overpaid = 0.0
+
+    with_expected = 0
+    without_expected = 0
+
+    for result in results:
+
+        total_paid += (
+            result.billed_amount or 0.0
+        )
+
+        if result.expected_amount is not None:
+
+            with_expected += 1
+
+            expected = float(
+                result.expected_amount
+            )
+
+            paid = float(
+                result.billed_amount
+            )
+
+            total_expected += expected
+
+            total_overpaid += max(
+                paid - expected,
+                0.0,
+            )
+
+        else:
+
+            without_expected += 1
+
+
+    print(
+        f"Total paid: ${total_paid:.2f}"
+    )
+
+    print(
+        f"Total expected: ${total_expected:.2f}"
+    )
+
+    print(
+        f"Total overpaid: ${total_overpaid:.2f}"
+    )
+
+    print(
+        f"Records with expected: {with_expected}"
+    )
+
+    print(
+        f"Records without expected: {without_expected}"
+    )
+
+    print(
+        f"Expected + overpaid: "
+        f"${total_expected + total_overpaid:.2f}"
+    )
+
+    print(
+        f"Paid - expected - overpaid: "
+        f"${total_paid - total_expected - total_overpaid:.2f}"
     )
 
     mismatch_repository = MismatchRepository(

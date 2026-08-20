@@ -97,6 +97,7 @@ class ReconciliationService:
         ]
 
     def _reconcile_one(self, invoice, unit_trips: list) -> Mismatch:
+        
         if not invoice.unit:
             return self._base(
                 invoice,
@@ -104,6 +105,7 @@ class ReconciliationService:
                 reason_code="NO_UNIT_ON_INVOICE",
             )
 
+        
         toll_candidates = self.toll_index.lookup(
             invoice.unit,
             invoice.toll_loc_name_start,
@@ -117,108 +119,221 @@ class ReconciliationService:
                 reason_code="REFERENCE_TOLL_NOT_FOUND",
             )
 
-        candidate_trips = self._candidate_trips(invoice, unit_trips)
-
-        if not candidate_trips:
-            if self._has_gps_coverage_near_time(invoice, unit_trips):
-                return self._base(
-                    invoice,
-                    verdict="mismatch",
-                    mismatch_type="misread",
-                    reason_code="NO_TRIP_AT_INVOICE_TIME",
-                    matched_toll_point_name=toll_candidates[0].name,
-                )
-            # Previously verdict="insufficient_gps" — no trip existed near
-            # the invoice time at all, so there's no GPS-based absence
-            # evidence here, only missing coverage. Folded into unmatched,
-            # not misread: unmatched already means "couldn't verify this
-            # against reference data" across all its other paths, which is
-            # exactly what's true here too — misread specifically requires
-            # GPS evidence of absence, which this case doesn't have.
-            return self._base(
-                invoice,
-                verdict="mismatch",
-                mismatch_type="unmatched",
-                reason_code="NO_GPS_TRIP_AROUND_INVOICE_TIME",
-                matched_toll_point_name=toll_candidates[0].name,
-            )
-
-        gps_match = self._confirm_gps_presence(
+       
+        candidate_trips = self._candidate_trips(
             invoice,
-            candidate_trips,
-            toll_candidates,
+            unit_trips,
         )
 
-        if gps_match is None:
-            if self._has_gps_coverage_near_time(invoice, candidate_trips):
+        
+        best = None
+        evaluated = []
+
+        # If we have candidate trips, prefer SDK toll points
+        # belonging to those trips.
+        if candidate_trips:
+
+            candidate_trip_ids = {
+                trip.trip_id
+                for trip in candidate_trips
+            }
+
+            matching_points = [
+                point
+                for point in toll_candidates
+                if point.sdk_trip_id in candidate_trip_ids
+            ]
+
+            if not matching_points:
+                matching_points = toll_candidates
+
+            best, evaluated = self.vehicle_matcher.compare(
+                invoice,
+                matching_points,
+            )
+
+        else:
+            # No physical trip around invoice time.
+            #
+            # We can still use the SDK reference points that
+            # belong to this unit.
+            best, evaluated = self.vehicle_matcher.compare(
+                invoice,
+                toll_candidates,
+            )
+
+        
+
+        expected_amount = (
+            best.expected_amount
+            if best is not None
+            else None
+        )
+
+        inferred_vehicle_type = (
+            best.vehicle_type
+            if best is not None
+            else None
+        )
+
+        billing_method = None
+
+        if best is not None:
+            billing_method, _ = (
+                self.vehicle_matcher.select_amount(
+                    invoice,
+                    best.toll_point,
+                )
+            )
+
+       
+
+        gps_match = None
+
+        if candidate_trips:
+            gps_match = self._confirm_gps_presence(
+                invoice,
+                candidate_trips,
+                toll_candidates,
+            )
+
+        
+
+        if candidate_trips and gps_match is None:
+
+            if self._has_gps_coverage_near_time(
+                invoice,
+                candidate_trips,
+            ):
+
+                delta = (
+                    float(invoice.amount)
+                    - float(expected_amount)
+                    if expected_amount is not None
+                    else None
+                )
+
                 return self._base(
                     invoice,
                     verdict="mismatch",
                     mismatch_type="misread",
                     reason_code="GPS_NOT_AT_INVOICED_TOLL",
-                    matched_toll_point_name=toll_candidates[0].name,
+                    expected_amount=expected_amount,
+                    delta_amount=delta,
+                    inferred_vehicle_type=inferred_vehicle_type,
+                    matched_toll_point_name=(
+                        best.toll_point.name
+                        if best is not None
+                        else toll_candidates[0].name
+                    ),
+                    billing_method=billing_method,
                 )
-            # Previously verdict="insufficient_gps" — same reasoning as
-            # above: no real absence evidence, just missing coverage, so
-            # this belongs with unmatched's other "couldn't verify" paths,
-            # not with misread's evidence-based ones.
+
+            # GPS coverage is insufficient.
             return self._base(
                 invoice,
                 verdict="mismatch",
                 mismatch_type="unmatched",
                 reason_code="GPS_COVERAGE_INSUFFICIENT",
-                matched_toll_point_name=toll_candidates[0].name,
+                expected_amount=expected_amount,
+                delta_amount=(
+                    float(invoice.amount)
+                    - float(expected_amount)
+                    if expected_amount is not None
+                    else None
+                ),
+                inferred_vehicle_type=inferred_vehicle_type,
+                matched_toll_point_name=(
+                    best.toll_point.name
+                    if best is not None
+                    else toll_candidates[0].name
+                ),
+                billing_method=billing_method,
             )
 
-        matching_points = [
-            point
-            for point in toll_candidates
-            if point.sdk_trip_id == gps_match["trip_id"]
-        ]
-        if not matching_points:
-            matching_points = toll_candidates
+        if not candidate_trips:
 
-        best, evaluated = self.vehicle_matcher.compare(
-            invoice,
-            matching_points,
-        )
+            return self._base(
+                invoice,
+                verdict="mismatch",
+                mismatch_type="unmatched",
+                reason_code="NO_GPS_TRIP_AROUND_INVOICE_TIME",
+                expected_amount=expected_amount,
+                delta_amount=(
+                    float(invoice.amount)
+                    - float(expected_amount)
+                    if expected_amount is not None
+                    else None
+                ),
+                inferred_vehicle_type=inferred_vehicle_type,
+                matched_toll_point_name=(
+                    best.toll_point.name
+                    if best is not None
+                    else toll_candidates[0].name
+                ),
+                billing_method=billing_method,
+            )
+
 
         if best is None:
+
             return self._base(
                 invoice,
                 verdict="mismatch",
                 mismatch_type="unmatched",
                 reason_code="NO_REFERENCE_AMOUNT",
                 trip_id=gps_match["trip_id"],
-                matched_toll_point_name=gps_match["toll_point"].name,
-                time_delta_seconds=gps_match["gps_time_delta"].total_seconds(),
-                gps_distance_km=gps_match["gps_distance_km"],
+                matched_toll_point_name=(
+                    gps_match["toll_point"].name
+                ),
+                time_delta_seconds=(
+                    gps_match["gps_time_delta"]
+                    .total_seconds()
+                ),
+                gps_distance_km=(
+                    gps_match["gps_distance_km"]
+                ),
             )
 
-        billing_method, _ = self.vehicle_matcher.select_amount(
-            invoice,
-            best.toll_point,
+
+
+        delta = (
+            float(invoice.amount)
+            - float(best.expected_amount)
         )
-        delta = float(invoice.amount) - float(best.expected_amount)
 
         if best.is_max_toll:
+
             verdict = "mismatch"
             mismatch_type = "max_toll"
             reason_code = "INVOICE_MATCHES_MAX_REFERENCE"
+
         elif best.matches:
+
             verdict = "matched"
             mismatch_type = None
             reason_code = "VEHICLE_TYPE_PRICE_MATCH"
+
         else:
+
             verdict = "mismatch"
             mismatch_type = "unmatched"
             reason_code = "NO_VEHICLE_TYPE_PRICE_MATCH"
 
         matching_types = [
-            c.vehicle_type for c in evaluated if c.matches
+            c.vehicle_type
+            for c in evaluated
+            if c.matches
         ]
-        confidence = "high" if len(matching_types) == 1 else (
-            "ambiguous" if matching_types else "none"
+
+        confidence = (
+            "high"
+            if len(matching_types) == 1
+            else (
+                "ambiguous"
+                if matching_types
+                else "none"
+            )
         )
 
         return self._base(
@@ -231,8 +346,13 @@ class ReconciliationService:
             expected_amount=best.expected_amount,
             delta_amount=delta,
             matched_toll_point_name=best.toll_point.name,
-            time_delta_seconds=gps_match["gps_time_delta"].total_seconds(),
-            gps_distance_km=gps_match["gps_distance_km"],
+            time_delta_seconds=(
+                gps_match["gps_time_delta"]
+                .total_seconds()
+            ),
+            gps_distance_km=(
+                gps_match["gps_distance_km"]
+            ),
             inferred_vehicle_type=best.vehicle_type,
             vehicle_type_confidence=confidence,
         )

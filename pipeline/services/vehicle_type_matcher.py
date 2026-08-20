@@ -15,7 +15,7 @@ class VehicleTypeCandidate:
 
 
 class VehicleTypeMatcher:
-    """Compare the invoice against SDK results for 2/3/4/5 axle hypotheses."""
+    """Compare invoice against configured axle hypotheses."""
 
     def __init__(
         self,
