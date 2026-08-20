@@ -14,19 +14,30 @@ import "time"
 // matching those exactly, decoding would depend on the driver's undocumented
 // default name-mapping behavior instead of an explicit, obvious contract.
 type InvoiceRow struct {
-	TransactionID string     `bson:"transactionId" json:"transactionId"`
-	Unit          string     `bson:"unit" json:"unit"`
-	TollsPaid     float64    `bson:"tollsPaid" json:"tollsPaid"`
-	Expected      *float64   `bson:"expected,omitempty" json:"expected,omitempty"`
-	Overpaid      *float64   `bson:"overpaid,omitempty" json:"overpaid,omitempty"`
-	MatchType     string     `bson:"matchType" json:"matchType"`
-	Status        string     `bson:"status" json:"status"`
-	TripID        *string    `bson:"tripId,omitempty" json:"tripId,omitempty"`
-	TagNo         *string    `bson:"tagNo,omitempty" json:"tagNo,omitempty"`
-	TollClass     *string    `bson:"tollClass,omitempty" json:"tollClass,omitempty"`
-	EntryPlaza    *string    `bson:"entryPlaza,omitempty" json:"entryPlaza,omitempty"`
-	EntryTime     time.Time  `bson:"entryTime" json:"entryTime"`
-	PostDate      *time.Time `bson:"postDate,omitempty" json:"postDate,omitempty"`
+	TransactionID string   `bson:"transactionId" json:"transactionId"`
+	Unit          string   `bson:"unit" json:"unit"`
+	TollsPaid     float64  `bson:"tollsPaid" json:"tollsPaid"`
+	Expected      *float64 `bson:"expected,omitempty" json:"expected,omitempty"`
+	Overpaid      *float64 `bson:"overpaid,omitempty" json:"overpaid,omitempty"`
+	// Verdict is the raw top-level outcome (matched | mismatch |
+	// unassigned | duplicate). MatchType is a
+	// display-friendly EFFECTIVE category — mismatch_type when
+	// Verdict == "mismatch", otherwise Verdict itself — so the table can
+	// show one consistent badge value regardless of which field the
+	// pipeline actually populated.
+	Verdict               string     `bson:"verdict" json:"verdict"`
+	MatchType             string     `bson:"matchType" json:"matchType"`
+	Status                string     `bson:"status" json:"status"`
+	TripID                *string    `bson:"tripId,omitempty" json:"tripId,omitempty"`
+	TagNo                 *string    `bson:"tagNo,omitempty" json:"tagNo,omitempty"`
+	TollClass             *string    `bson:"tollClass,omitempty" json:"tollClass,omitempty"`
+	EntryPlaza            *string    `bson:"entryPlaza,omitempty" json:"entryPlaza,omitempty"`
+	EntryTime             time.Time  `bson:"entryTime" json:"entryTime"`
+	PostDate              *time.Time `bson:"postDate,omitempty" json:"postDate,omitempty"`
+	ReasonCode            *string    `bson:"reasonCode,omitempty" json:"reasonCode,omitempty"`
+	InferredVehicleType   *string    `bson:"inferredVehicleType,omitempty" json:"inferredVehicleType,omitempty"`
+	VehicleTypeConfidence *string    `bson:"vehicleTypeConfidence,omitempty" json:"vehicleTypeConfidence,omitempty"`
+	IsDuplicate           bool       `bson:"isDuplicate" json:"isDuplicate"`
 }
 
 type InvoiceListResponse struct {

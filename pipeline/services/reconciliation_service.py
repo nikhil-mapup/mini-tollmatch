@@ -4,14 +4,32 @@ from config.config import (
     TOLL_MATCH_TIME_TOLERANCE_MINUTES,
     TOLL_MATCH_DISTANCE_KM,
     AMOUNT_TOLERANCE_USD,
+    AMOUNT_TOLERANCE_PERCENT,
     DUPLICATE_TIME_WINDOW_MINUTES,
 )
 from models.mismatch import Mismatch
 from services.toll_location_index import TollLocationIndex
+from services.vehicle_type_matcher import VehicleTypeMatcher
 from utils.geo import haversine_distance_km
 from utils.text import normalize_plaza_name
 
+
 class ReconciliationService:
+    """Applies the business reconciliation decision tree.
+
+    1. No unit -> unassigned.
+    2. Duplicate detection is applied after the base classification.
+    3. Find the physical trip/GPS evidence around the invoice event.
+    4. If GPS strongly says the unit was elsewhere -> misread (real
+       absence evidence only).
+    5. If GPS evidence is unavailable entirely -> unmatched (folded in
+       from insufficient_gps — no reference data could be checked here,
+       same shape as unmatched's other paths, not an absence finding).
+    6. If GPS supports the toll, compare 2/3/4/5 axle SDK candidates.
+    7. Invoice matches maximum reference -> max_toll.
+    8. Invoice matches a vehicle hypothesis -> matched.
+    9. Otherwise -> unmatched.
+    """
 
     def __init__(
         self,
@@ -24,145 +42,219 @@ class ReconciliationService:
         self.toll_index = toll_index
         self.time_tolerance = timedelta(minutes=time_tolerance_minutes)
         self.distance_km = distance_km
-        self.amount_tolerance = amount_tolerance
+        self.strong_gps_window = timedelta(minutes=max(time_tolerance_minutes * 2, 60))
         self.duplicate_window = timedelta(minutes=duplicate_window_minutes)
+        self.vehicle_matcher = VehicleTypeMatcher(
+            absolute_tolerance=amount_tolerance,
+            relative_tolerance=AMOUNT_TOLERANCE_PERCENT,
+        )
 
     def reconcile(self, trips: list, invoices: list) -> list[Mismatch]:
-        points_by_unit: dict[str, list] = {}
         trips_by_unit: dict[str, list] = {}
         for trip in trips:
-            points_by_unit.setdefault(trip.unit, []).extend(trip.gps_points)
             trips_by_unit.setdefault(trip.unit, []).append(trip)
 
-        mismatches = []
+        for unit_trips in trips_by_unit.values():
+            unit_trips.sort(key=lambda t: t.start_time)
+
+        results = []
         for invoice in invoices:
-            mismatch = self._reconcile_one(
-                invoice,
-                points_by_unit.get(invoice.unit, []),
-                trips_by_unit.get(invoice.unit, []),
-            )
-            mismatches.append(mismatch)
-
-        self._flag_duplicates(mismatches)
-        return mismatches
-
-    def _reconcile_one(self, invoice, unit_gps_points: list, unit_trips: list) -> Mismatch:
-        if not invoice.unit:
-            return Mismatch(
-                transaction_id=invoice.transaction_id,
-                entry_time=invoice.entry_time,
-                unit="UNKNOWN",
-                verdict="unassigned",
-                billed_amount=invoice.amount,
-            )
-        toll_point = self.toll_index.lookup(invoice.unit, invoice.toll_loc_name_start)
-
-        if toll_point is None or toll_point.start_lat is None or toll_point.start_lng is None:
-
-            return Mismatch(
-                transaction_id=invoice.transaction_id,
-                entry_time=invoice.entry_time,
-                unit=invoice.unit,
-                verdict="unassigned",
-                billed_amount=invoice.amount,
+            results.append(
+                self._reconcile_one(
+                    invoice,
+                    trips_by_unit.get(invoice.unit, []) if invoice.unit else [],
+                )
             )
 
-        confirmed_point, time_delta = self._confirm_match(invoice, unit_gps_points, toll_point)
-        if not toll_point.vehicle_type_valid:
-            return Mismatch(
-                transaction_id=invoice.transaction_id,
-                entry_time=invoice.entry_time,
-                unit=invoice.unit,
-                verdict="unassigned",
-                reason_code="VEHICLE_TYPE_MISMATCH",
-                billed_amount=invoice.amount,
-                matched_toll_point_name=toll_point.name,
-                time_delta_seconds=(
-                    time_delta.total_seconds()
-                    if time_delta
-                    else None
-                ),
-            )
+        self._flag_duplicates(results)
+        return results
 
-        if confirmed_point is None:
-            return Mismatch(
-                transaction_id=invoice.transaction_id,
-                entry_time=invoice.entry_time,
-                unit=invoice.unit,
-                mismatch_type="unmatched",
-                billed_amount=invoice.amount,
-                matched_toll_point_name=toll_point.name,
-            )
-
-        billing_method, expected_amount = self._select_expected_amount(invoice, toll_point)
-
-        if expected_amount is None:
-            return Mismatch(
-                transaction_id=invoice.transaction_id,
-                entry_time=invoice.entry_time,
-                unit=invoice.unit,
-                mismatch_type="unmatched",
-                billed_amount=invoice.amount,
-                matched_toll_point_name=toll_point.name,
-                time_delta_seconds=time_delta.total_seconds() if time_delta else None,
-            )
-
-        delta = invoice.amount - expected_amount
-        mismatch_type = self._classify_delta(
-            billed_amount=invoice.amount,
-            expected_amount=expected_amount,
-            toll_point=toll_point,
-            billing_method=billing_method,
-        )
-        trip_id = self._find_containing_trip_id(confirmed_point, unit_trips)
-
+    def _base(
+        self,
+        invoice,
+        verdict: str,
+        mismatch_type: str | None = None,
+        **kwargs,
+    ) -> Mismatch:
         return Mismatch(
             transaction_id=invoice.transaction_id,
             entry_time=invoice.entry_time,
             unit=invoice.unit,
-            trip_id=trip_id,
+            verdict=verdict,
             mismatch_type=mismatch_type,
-            billing_method=billing_method,
-            expected_amount=expected_amount,
-            billed_amount=invoice.amount,
-            delta_amount=delta,
-            matched_toll_point_name=toll_point.name,
-            time_delta_seconds=time_delta.total_seconds() if time_delta else None,
+            billed_amount=float(invoice.amount),
+            **kwargs,
         )
-        
-    def _candidate_trips(self, invoice, unit_trips):
-        candidates = []
 
-        for trip in unit_trips:
+    def _candidate_trips(self, invoice, unit_trips: list) -> list:
+        """A trip is a candidate if it contains the invoice time or overlaps it."""
+        before = invoice.entry_time - self.time_tolerance
+        after = invoice.entry_time + self.time_tolerance
+        return [
+            trip
+            for trip in unit_trips
+            if trip.start_time <= after and trip.end_time >= before
+        ]
 
-            if (
-                trip.start_time
-                <= invoice.entry_time
-                <= trip.end_time
-            ):
-                candidates.append(trip)
-                continue
+    def _reconcile_one(self, invoice, unit_trips: list) -> Mismatch:
+        if not invoice.unit:
+            return self._base(
+                invoice,
+                verdict="unassigned",
+                reason_code="NO_UNIT_ON_INVOICE",
+            )
 
-            # Optional tolerance around trip boundaries
-            before = invoice.entry_time - self.time_tolerance
-            after = invoice.entry_time + self.time_tolerance
+        toll_candidates = self.toll_index.lookup(
+            invoice.unit,
+            invoice.toll_loc_name_start,
+        )
 
-            if trip.start_time <= after and trip.end_time >= before:
-                candidates.append(trip)
+        if not toll_candidates:
+            return self._base(
+                invoice,
+                verdict="mismatch",
+                mismatch_type="unmatched",
+                reason_code="REFERENCE_TOLL_NOT_FOUND",
+            )
 
-        return candidates
-
-    def _confirm_match(self, invoice, unit_trips, toll_point_candidates):
         candidate_trips = self._candidate_trips(invoice, unit_trips)
+
+        if not candidate_trips:
+            if self._has_gps_coverage_near_time(invoice, unit_trips):
+                return self._base(
+                    invoice,
+                    verdict="mismatch",
+                    mismatch_type="misread",
+                    reason_code="NO_TRIP_AT_INVOICE_TIME",
+                    matched_toll_point_name=toll_candidates[0].name,
+                )
+            # Previously verdict="insufficient_gps" — no trip existed near
+            # the invoice time at all, so there's no GPS-based absence
+            # evidence here, only missing coverage. Folded into unmatched,
+            # not misread: unmatched already means "couldn't verify this
+            # against reference data" across all its other paths, which is
+            # exactly what's true here too — misread specifically requires
+            # GPS evidence of absence, which this case doesn't have.
+            return self._base(
+                invoice,
+                verdict="mismatch",
+                mismatch_type="unmatched",
+                reason_code="NO_GPS_TRIP_AROUND_INVOICE_TIME",
+                matched_toll_point_name=toll_candidates[0].name,
+            )
+
+        gps_match = self._confirm_gps_presence(
+            invoice,
+            candidate_trips,
+            toll_candidates,
+        )
+
+        if gps_match is None:
+            if self._has_gps_coverage_near_time(invoice, candidate_trips):
+                return self._base(
+                    invoice,
+                    verdict="mismatch",
+                    mismatch_type="misread",
+                    reason_code="GPS_NOT_AT_INVOICED_TOLL",
+                    matched_toll_point_name=toll_candidates[0].name,
+                )
+            # Previously verdict="insufficient_gps" — same reasoning as
+            # above: no real absence evidence, just missing coverage, so
+            # this belongs with unmatched's other "couldn't verify" paths,
+            # not with misread's evidence-based ones.
+            return self._base(
+                invoice,
+                verdict="mismatch",
+                mismatch_type="unmatched",
+                reason_code="GPS_COVERAGE_INSUFFICIENT",
+                matched_toll_point_name=toll_candidates[0].name,
+            )
+
+        matching_points = [
+            point
+            for point in toll_candidates
+            if point.sdk_trip_id == gps_match["trip_id"]
+        ]
+        if not matching_points:
+            matching_points = toll_candidates
+
+        best, evaluated = self.vehicle_matcher.compare(
+            invoice,
+            matching_points,
+        )
+
+        if best is None:
+            return self._base(
+                invoice,
+                verdict="mismatch",
+                mismatch_type="unmatched",
+                reason_code="NO_REFERENCE_AMOUNT",
+                trip_id=gps_match["trip_id"],
+                matched_toll_point_name=gps_match["toll_point"].name,
+                time_delta_seconds=gps_match["gps_time_delta"].total_seconds(),
+                gps_distance_km=gps_match["gps_distance_km"],
+            )
+
+        billing_method, _ = self.vehicle_matcher.select_amount(
+            invoice,
+            best.toll_point,
+        )
+        delta = float(invoice.amount) - float(best.expected_amount)
+
+        if best.is_max_toll:
+            verdict = "mismatch"
+            mismatch_type = "max_toll"
+            reason_code = "INVOICE_MATCHES_MAX_REFERENCE"
+        elif best.matches:
+            verdict = "matched"
+            mismatch_type = None
+            reason_code = "VEHICLE_TYPE_PRICE_MATCH"
+        else:
+            verdict = "mismatch"
+            mismatch_type = "unmatched"
+            reason_code = "NO_VEHICLE_TYPE_PRICE_MATCH"
+
+        matching_types = [
+            c.vehicle_type for c in evaluated if c.matches
+        ]
+        confidence = "high" if len(matching_types) == 1 else (
+            "ambiguous" if matching_types else "none"
+        )
+
+        return self._base(
+            invoice,
+            verdict=verdict,
+            mismatch_type=mismatch_type,
+            reason_code=reason_code,
+            trip_id=gps_match["trip_id"],
+            billing_method=billing_method,
+            expected_amount=best.expected_amount,
+            delta_amount=delta,
+            matched_toll_point_name=best.toll_point.name,
+            time_delta_seconds=gps_match["gps_time_delta"].total_seconds(),
+            gps_distance_km=gps_match["gps_distance_km"],
+            inferred_vehicle_type=best.vehicle_type,
+            vehicle_type_confidence=confidence,
+        )
+
+    def _confirm_gps_presence(self, invoice, candidate_trips, toll_candidates):
         best = None
+
         for trip in candidate_trips:
+            trip_tolls = [
+                t for t in toll_candidates
+                if t.sdk_trip_id == trip.trip_id
+            ] or toll_candidates
+
             for point in trip.gps_points:
                 gps_dt = abs(point.gps_timestamp - invoice.entry_time)
                 if gps_dt > self.time_tolerance:
                     continue
-                for toll in toll_point_candidates:
+
+                for toll in trip_tolls:
                     if toll.start_lat is None or toll.start_lng is None:
                         continue
+
                     gps_distance = haversine_distance_km(
                         point.latitude,
                         point.longitude,
@@ -171,115 +263,49 @@ class ReconciliationService:
                     )
                     if gps_distance > self.distance_km:
                         continue
+
                     sdk_dt = None
                     if toll.arrival_time is not None:
                         sdk_dt = abs(toll.arrival_time - invoice.entry_time)
+
                     score = (
                         gps_distance,
                         sdk_dt.total_seconds() if sdk_dt else float("inf"),
                         gps_dt.total_seconds(),
                     )
-                    if best is None or score < best["score"]:
-                        best = {
+                    candidate = {
                         "trip_id": trip.trip_id,
                         "gps_point": point,
                         "toll_point": toll,
-                        "score": score,
                         "gps_time_delta": gps_dt,
                         "sdk_time_delta": sdk_dt,
                         "gps_distance_km": gps_distance,
-                        }
+                        "score": score,
+                    }
+                    if best is None or score < best["score"]:
+                        best = candidate
+
         return best
 
-    def _select_expected_amount(self, invoice, toll_point):
-
-        if not toll_point.vehicle_type_valid:
-            return None, None
-
-        has_tag = bool(
-            invoice.tag_no
-            and str(invoice.tag_no).strip()
-        )
-
-        if has_tag:
-            if toll_point.tag_cost is not None:
-                return "tag", toll_point.tag_cost
-
-        else:
-            if toll_point.license_plate_cost is not None:
-                return "plate", toll_point.license_plate_cost
-
-        if toll_point.cash_cost is not None:
-            return "cash_fallback", toll_point.cash_cost
-
-        return None, None
-    
-    def _within_amount_tolerance(
-        self,
-        billed: float,
-        expected: float,
-    ) -> bool:
-
-        absolute_tolerance = self.amount_tolerance
-        relative_tolerance = 0.05  # 5%
-
-        difference = abs(billed - expected)
-
-        return (
-            difference <= absolute_tolerance
-            or
-            difference <= (
-                relative_tolerance
-                * max(expected, 1.0)
-            )
-        )
-
-    def _classify_delta(
-        self,
-        billed_amount: float,
-        expected_amount: float,
-        toll_point,
-        billing_method: str,
-    ) -> str:
-
-        delta = billed_amount - expected_amount
-
-        if self._within_amount_tolerance(
-            billed=billed_amount,
-            expected=expected_amount,
-        ):
-            return "matched"
-
-        max_reference = (
-            toll_point.tag_cost_max
-            if billing_method == "tag"
-            else None
-        )
-
-        if (
-            max_reference is not None
-            and self._within_amount_tolerance(
-                billed=billed_amount,
-                expected=max_reference,
-            )
-        ):
-            return "max_toll"
-
-        return "misread"
-
-    def _find_containing_trip_id(self, point, unit_trips: list) -> str | None:
+    def _has_gps_coverage_near_time(self, invoice, unit_trips: list) -> bool:
+        window_start = invoice.entry_time - self.strong_gps_window
+        window_end = invoice.entry_time + self.strong_gps_window
         for trip in unit_trips:
-            if trip.start_time <= point.gps_timestamp <= trip.end_time:
-                return trip.trip_id
-        return None
+            for point in trip.gps_points:
+                if window_start <= point.gps_timestamp <= window_end:
+                    return True
+        return False
 
-    def _flag_duplicates(self, mismatches: list[Mismatch]):
+    def _flag_duplicates(self, results: list[Mismatch]):
         groups = {}
-        for m in mismatches:
-            if not m.matched_toll_point_name or m.verdict in ("unassigned", "unmatched"):
+        for result in results:
+            if not result.unit or not result.matched_toll_point_name:
                 continue
-            key = (m.unit, normalize_plaza_name(m.matched_toll_point_name))
-            groups.setdefault(key, []).append(m)
+            key = (
+                result.unit,
+                normalize_plaza_name(result.matched_toll_point_name),
+            )
+            groups.setdefault(key, []).append(result)
 
         for records in groups.values():
             records.sort(key=lambda x: x.entry_time)
@@ -289,9 +315,15 @@ class ReconciliationService:
                 dt = curr.entry_time - prev.entry_time
                 if dt > self.duplicate_window:
                     continue
-                same_amount = abs((curr.billed_amount or 0) - (prev.billed_amount or 0)) <= self.amount_tolerance
-                same_trip = (prev.trip_id is not None and curr.trip_id is not None and prev.trip_id == curr.trip_id)
-                
+
+                same_amount = abs(curr.billed_amount - prev.billed_amount) <= self.vehicle_matcher.absolute_tolerance
+                same_trip = (
+                    prev.trip_id is not None
+                    and curr.trip_id is not None
+                    and prev.trip_id == curr.trip_id
+                )
+
                 if same_amount or same_trip:
+                    curr.is_duplicate = True
                     curr.verdict = "duplicate"
                     curr.reason_code = "DUPLICATE_CLOSE_EVENT"

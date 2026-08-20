@@ -41,10 +41,11 @@ func (r *InvoiceViewRepository) List(
 	sortField, sortOrder string,
 	page, limit int64,
 ) (models.InvoiceListResponse, error) {
-	// buildFilter() already applies f.Type as an exact mismatch_type match
-	// (existing, shared logic). The tab below is a coarser 3-way split of
-	// the same field — if both are present, the more specific f.Type wins,
-	// applied AFTER the tab switch so it can't be silently overwritten.
+	// buildFilter() already applies f.Type (routed to verdict when the
+	// value is "matched", to mismatch_type otherwise — see buildFilter).
+	// The tab below is a coarser split of the same underlying data — if
+	// both are present, the more specific f.Type wins, applied AFTER the
+	// tab switch so it can't be silently overwritten.
 	filter := buildFilter(f)
 
 	// buildFilter() also applies Start/End against `entry_time` (the GPS
@@ -56,12 +57,21 @@ func (r *InvoiceViewRepository) List(
 
 	switch tab {
 	case TabMatched:
-		filter["mismatch_type"] = "matched"
+		filter["verdict"] = "matched"
 	case TabMismatched:
-		filter["mismatch_type"] = bson.M{"$ne": "matched"}
+		// "Mismatched" means a confirmed, evidence-backed problem —
+		// mismatch or duplicate. "unassigned" is deliberately excluded:
+		// it's unresolved, not proven wrong, so it only shows up under
+		// the "All" tab, not here.
+		filter["verdict"] = bson.M{"$in": bson.A{"mismatch", "duplicate"}}
 	}
 	if f.Type != "" {
-		filter["mismatch_type"] = f.Type
+		if verdictLevelTypes[f.Type] {
+			filter["verdict"] = f.Type
+			delete(filter, "mismatch_type")
+		} else {
+			filter["mismatch_type"] = f.Type
+		}
 	}
 
 	if search != "" {
@@ -130,14 +140,26 @@ func (r *InvoiceViewRepository) List(
 				"tollsPaid":     "$billed_amount",
 				"expected":      "$expected_amount",
 				"overpaid":      "$delta_amount",
-				"matchType":     "$mismatch_type",
-				"status":        "$status",
-				"tripId":        "$trip_id",
-				"entryTime":     "$entry_time",
-				"tagNo":         "$invoice.tag_no",
-				"tollClass":     "$invoice.toll_class",
-				"entryPlaza":    "$invoice.entry_plaza",
-				"postDate":      "$invoice.post_date",
+				"verdict":       "$verdict",
+				// Effective category for display: mismatch_type when the
+				// verdict is a confirmed mismatch, otherwise the verdict
+				// itself (matched/duplicate/unassigned).
+				"matchType": bson.M{"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$verdict", "mismatch"}},
+					"$mismatch_type",
+					"$verdict",
+				}},
+				"status":                "$status",
+				"tripId":                "$trip_id",
+				"entryTime":             "$entry_time",
+				"tagNo":                 "$invoice.tag_no",
+				"tollClass":             "$invoice.toll_class",
+				"entryPlaza":            "$invoice.entry_plaza",
+				"postDate":              "$invoice.post_date",
+				"reasonCode":            "$reason_code",
+				"inferredVehicleType":   "$inferred_vehicle_type",
+				"vehicleTypeConfidence": "$vehicle_type_confidence",
+				"isDuplicate":           "$is_duplicate",
 			}},
 		},
 		"totalCount": bson.A{

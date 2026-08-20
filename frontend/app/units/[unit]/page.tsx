@@ -127,8 +127,9 @@ export default async function UnitDetailPage({ params }: { params: { unit: strin
       {trips.length > 0 && summary.mismatchCount > trips.reduce((sum, t) => sum + t.mismatchCount, 0) && (
         <p className="text-sm text-ink/50">
           Note: the total above ({summary.mismatchCount}) is higher than the sum of per-trip counts
-          shown in this table. That's expected — mismatches classified as &quot;unmatched&quot; or
-          &quot;unassigned&quot; couldn&apos;t be attributed to a specific trip, so they count toward
+          shown in this table. That's expected — invoices classified as &quot;unassigned&quot; (no
+          truck ID on the invoice at all), or as &quot;unmatched&quot; where no GPS coverage existed
+          near the invoice time, never get GPS-confirmed against a specific trip, so they count toward
           this unit&apos;s total but won&apos;t appear on any individual row above.
         </p>
       )}

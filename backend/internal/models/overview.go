@@ -19,8 +19,12 @@ type CostOverviewResponse struct {
 	MatchPct       float64 `json:"matchPct"`
 	MismatchAmount float64 `json:"mismatchAmount"`
 	MismatchPct    float64 `json:"mismatchPct"`
-	TotalUnits     int64   `json:"totalUnits"`
-	PaidTolls      float64 `json:"paidTolls"`
+	// Billed amount for verdict "unassigned" — not
+	// counted as match or mismatch (neither is proven), tracked
+	// separately rather than silently folded into either bucket.
+	UnconfirmedAmount float64 `json:"unconfirmedAmount"`
+	TotalUnits        int64   `json:"totalUnits"`
+	PaidTolls         float64 `json:"paidTolls"`
 }
 
 // Screenshot 3 — "Cost Overview by Cost Center" — the header matches figures
@@ -35,13 +39,14 @@ type CostCenterRow struct {
 }
 
 type CostOverviewByCostCenterResponse struct {
-	MatchAmount    float64         `json:"matchAmount"`
-	MatchPct       float64         `json:"matchPct"`
-	MismatchAmount float64         `json:"mismatchAmount"`
-	MismatchPct    float64         `json:"mismatchPct"`
-	Rows           []CostCenterRow `json:"rows"`
-	TotalUnits     int64           `json:"totalUnits"`
-	PaidTolls      float64         `json:"paidTolls"`
+	MatchAmount       float64         `json:"matchAmount"`
+	MatchPct          float64         `json:"matchPct"`
+	MismatchAmount    float64         `json:"mismatchAmount"`
+	MismatchPct       float64         `json:"mismatchPct"`
+	UnconfirmedAmount float64         `json:"unconfirmedAmount"`
+	Rows              []CostCenterRow `json:"rows"`
+	TotalUnits        int64           `json:"totalUnits"`
+	PaidTolls         float64         `json:"paidTolls"`
 }
 
 // Screenshot 4 — "Invoice Overview" — counts, not dollar amounts.
@@ -50,7 +55,9 @@ type InvoiceOverviewResponse struct {
 	MatchPct      float64 `json:"matchPct"`
 	MismatchCount int64   `json:"mismatchCount"`
 	MismatchPct   float64 `json:"mismatchPct"`
-	TotalInvoices int64   `json:"totalInvoices"`
+	// Same "unassigned" carve-out as CostOverviewResponse.
+	UnconfirmedCount int64 `json:"unconfirmedCount"`
+	TotalInvoices    int64 `json:"totalInvoices"`
 }
 
 // Screenshot 5 — relabeled "by Mismatch Type" since no invoice-status

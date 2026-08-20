@@ -97,6 +97,21 @@ class RouteSegmenter:
 
                 dwell_end_index, dwell_duration_minutes = dwell_result
 
+                if stats:
+                    stats.dwell_splits += 1
+
+                self.dwell_durations.append(dwell_duration_minutes)
+                if dwell_duration_minutes < 30:
+                    self.dwell_15_30 += 1
+                elif dwell_duration_minutes < 60:
+                    self.dwell_30_60 += 1
+                elif dwell_duration_minutes < 120:
+                    self.dwell_60_120 += 1
+                elif dwell_duration_minutes < 240:
+                    self.dwell_120_240 += 1
+                else:
+                    self.dwell_240_plus += 1
+
                 # Keep the dwell GPS points in the current segment.
                 dwell_points = records[i:dwell_end_index + 1]
 

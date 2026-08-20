@@ -2,17 +2,30 @@
 // exactly. If a field is added or renamed on the Go side, this is the one
 // file to update on the frontend — nowhere else should redefine this shape.
 
+// Mismatches use a two-field outcome as of the pipeline rewrite: verdict is
+// the top-level result (matched | mismatch | unassigned | duplicate);
+// mismatchType only carries a value when
+// verdict === "mismatch" (misread | unmatched | max_toll). A genuine match
+// has mismatchType undefined, NOT "matched" — don't check mismatchType to
+// find the good outcome, check verdict.
 export interface Mismatch {
   transactionId: string;
   unit: string;
   tripId?: string;
-  mismatchType: string;
+  verdict: string;
+  mismatchType?: string;
+  reasonCode?: string;
   billingMethod?: string;
   expectedAmount?: number;
   billedAmount: number;
   deltaAmount?: number;
   matchedTollPointName?: string;
   entryTime: string;
+  timeDeltaSeconds?: number;
+  gpsDistanceKm?: number;
+  inferredVehicleType?: string;
+  vehicleTypeConfidence?: string;
+  isDuplicate: boolean;
   status: string;
   detectedAt: string;
 }
@@ -21,6 +34,10 @@ export interface SummaryResponse {
   totalTollSpend: number;
   mismatchCount: number;
   mismatchAmount: number;
+  // Invoices with verdict "unassigned" — genuinely
+  // unresolved, excluded from mismatchCount since they aren't a proven
+  // problem.
+  unconfirmedCount: number;
   topType: string;
 }
 
@@ -64,6 +81,7 @@ export interface CostOverviewResponse {
   matchPct: number;
   mismatchAmount: number;
   mismatchPct: number;
+  unconfirmedAmount: number;
   totalUnits: number;
   paidTolls: number;
 }
@@ -82,6 +100,7 @@ export interface CostOverviewByCostCenterResponse {
   matchPct: number;
   mismatchAmount: number;
   mismatchPct: number;
+  unconfirmedAmount: number;
   rows: CostCenterRow[];
   totalUnits: number;
   paidTolls: number;
@@ -93,6 +112,7 @@ export interface InvoiceOverviewResponse {
   matchPct: number;
   mismatchCount: number;
   mismatchPct: number;
+  unconfirmedCount: number;
   totalInvoices: number;
 }
 
@@ -117,6 +137,11 @@ export interface InvoiceRow {
   tollsPaid: number;
   expected?: number;
   overpaid?: number;
+  // Raw top-level outcome (matched | mismatch | unassigned | duplicate).
+  verdict: string;
+  // Display-friendly effective category: mismatchType when
+  // verdict === "mismatch", otherwise the verdict itself — always safe to
+  // render directly as a single badge value.
   matchType: string;
   status: string;
   tripId?: string;
@@ -125,6 +150,10 @@ export interface InvoiceRow {
   entryPlaza?: string;
   entryTime: string;
   postDate?: string;
+  reasonCode?: string;
+  inferredVehicleType?: string;
+  vehicleTypeConfidence?: string;
+  isDuplicate: boolean;
 }
 
 export interface InvoiceListResponse {

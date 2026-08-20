@@ -4,18 +4,22 @@ from pathlib import Path
 
 from models.trip import PhysicalTrip
 
-class TripCSVExporter:
-    HEADERS = [
-        "latitude",
-        "longitude",
-        "timestamp",
-        "units",
-    ]
 
-    def export(self, trip: PhysicalTrip, output_dir: Path) -> Path:
+class TripCSVExporter:
+    HEADERS = ["latitude", "longitude", "timestamp", "units"]
+
+    def export(
+        self,
+        trip: PhysicalTrip,
+        output_dir: Path,
+        vehicle_type: str | None = None,
+    ) -> Path:
+        if vehicle_type:
+            output_dir = output_dir / vehicle_type
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        file_path = (output_dir/ f"{trip.trip_id}.csv")
+        suffix = f"_{vehicle_type}" if vehicle_type else ""
+        file_path = output_dir / f"{trip.trip_id}{suffix}.csv"
 
         with file_path.open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=self.HEADERS)
@@ -26,13 +30,11 @@ class TripCSVExporter:
                     .isoformat()
                     .replace("+00:00", "Z")
                 )
-                writer.writerow(
-                    {
-                        "latitude": point.latitude,
-                        "longitude": point.longitude,
-                        "timestamp": timestamp,
-                        "units": point.unit,
-                    }
-                )
+                writer.writerow({
+                    "latitude": point.latitude,
+                    "longitude": point.longitude,
+                    "timestamp": timestamp,
+                    "units": point.unit,
+                })
 
         return file_path

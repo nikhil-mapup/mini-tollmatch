@@ -7,13 +7,16 @@ import { EmptyState } from "@/components/empty-state";
 // Relabeled from the original product's "by Invoice Status" — that requires
 // a dispute/refund lifecycle (Disputed/Refunded/Denied/etc) that doesn't
 // exist anywhere in this pipeline. This shows the real breakdown we do
-// have: mismatch_type, including "" for the clean invoices.
+// have: the effective category per invoice (mismatch_type when the
+// verdict is a confirmed mismatch, otherwise the verdict itself), which
+// is exactly what the backend's TypeCounts/mismatch-breakdown endpoint
+// now computes.
 const COLORS: Record<string, string> = {
   matched: "#3D8361",
   max_toll: "#E3A008",
   misread: "#A6402C",
   duplicate: "#8E3524",
-  no_gps_confirmation: "#9CA3AF",
+  unmatched: "#9CA3AF",
   unassigned: "#D1D5DB",
 };
 

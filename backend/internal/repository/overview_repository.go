@@ -22,10 +22,21 @@ func NewOverviewRepository(mismatches, invoices *mongo.Collection) *OverviewRepo
 	return &OverviewRepository{mismatches: mismatches, invoices: invoices}
 }
 
-// isMismatchCond is the one place "match vs mismatch" is defined as a Mongo
-// expression — every aggregation below that needs this split reuses it, so
-// the definition can never drift between endpoints.
-var isMismatchCond = bson.M{"$ne": bson.A{"$mismatch_type", "matched"}}
+// isMismatchCond is the one place "counts as a real, evidence-backed
+// mismatch" is defined as a Mongo expression — every aggregation below
+// that needs this split reuses it, so the definition can never drift
+// between endpoints.
+//
+// This now checks Verdict, not MismatchType — the pipeline's rewrite made
+// MismatchType nil for a genuine match, with "matched" living on Verdict
+// instead. "unassigned" is deliberately excluded from both match and
+// mismatch (see confirmedProblemVerdicts in models/mismatch.go) — it's
+// "we don't know," not a proven problem. "insufficient_gps" was a second
+// such verdict and has since been folded into mismatch_type "unmatched"
+// by the pipeline (a real, evidence-backed case), so it's no longer
+// excluded here — it now correctly counts as a confirmed mismatch.
+var isMismatchCond = bson.M{"$in": bson.A{"$verdict", bson.A{"mismatch", "duplicate"}}}
+var isUnconfirmedCond = bson.M{"$in": bson.A{"$verdict", bson.A{"unassigned"}}}
 
 var positiveDeltaCond = bson.M{
 	"$cond": bson.A{bson.M{"$gt": bson.A{"$delta_amount", 0}}, "$delta_amount", 0},
@@ -83,19 +94,18 @@ func (r *OverviewRepository) GetOverview(ctx context.Context, f models.Filters) 
 
 // matchMismatchAmounts is shared by GetCostOverview and
 // GetCostOverviewByCostCenter — both need the identical header figures.
-func (r *OverviewRepository) matchMismatchAmounts(ctx context.Context, filter bson.M) (matchAmt, mismatchAmt float64, err error) {
+func (r *OverviewRepository) matchMismatchAmounts(ctx context.Context, filter bson.M) (matchAmt, mismatchAmt, unconfirmedAmt float64, err error) {
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
 		{{Key: "$group", Value: bson.M{
-			"_id":            "$mismatch_type",
-			"amount":         bson.M{"$sum": "$billed_amount"},
-			"isMismatchType": bson.M{"$first": isMismatchCond},
+			"_id":    "$verdict",
+			"amount": bson.M{"$sum": "$billed_amount"},
 		}}},
 	}
 
 	cursor, aggErr := r.mismatches.Aggregate(ctx, pipeline)
 	if aggErr != nil {
-		return 0, 0, aggErr
+		return 0, 0, 0, aggErr
 	}
 	defer cursor.Close(ctx)
 
@@ -104,17 +114,20 @@ func (r *OverviewRepository) matchMismatchAmounts(ctx context.Context, filter bs
 		Amount float64 `bson:"amount"`
 	}
 	if decErr := cursor.All(ctx, &rows); decErr != nil {
-		return 0, 0, decErr
+		return 0, 0, 0, decErr
 	}
 
 	for _, row := range rows {
-		if row.ID == "matched" {
+		switch row.ID {
+		case "matched":
 			matchAmt += row.Amount
-		} else {
+		case "mismatch", "duplicate":
 			mismatchAmt += row.Amount
+		case "unassigned":
+			unconfirmedAmt += row.Amount
 		}
 	}
-	return matchAmt, mismatchAmt, nil
+	return matchAmt, mismatchAmt, unconfirmedAmt, nil
 }
 
 func (r *OverviewRepository) totalUnitsAndPaidTolls(ctx context.Context, filter bson.M) (int64, float64, error) {
@@ -147,12 +160,13 @@ func (r *OverviewRepository) totalUnitsAndPaidTolls(ctx context.Context, filter 
 }
 
 // GetCostOverview powers screenshot 2. Match $ / Mismatch $ are portions of
-// total paid tolls (they sum to PaidTolls), not the overpaid delta — this
-// matches the two-color proportion bar shown above the list in the UI.
+// total paid tolls (they sum to PaidTolls only when nothing is
+// unconfirmed), not the overpaid delta — this matches the two-color
+// proportion bar shown above the list in the UI.
 func (r *OverviewRepository) GetCostOverview(ctx context.Context, f models.Filters) (models.CostOverviewResponse, error) {
 	filter := buildFilter(f)
 
-	matchAmt, mismatchAmt, err := r.matchMismatchAmounts(ctx, filter)
+	matchAmt, mismatchAmt, unconfirmedAmt, err := r.matchMismatchAmounts(ctx, filter)
 	if err != nil {
 		return models.CostOverviewResponse{}, err
 	}
@@ -162,11 +176,16 @@ func (r *OverviewRepository) GetCostOverview(ctx context.Context, f models.Filte
 	}
 
 	resp := models.CostOverviewResponse{
-		MatchAmount:    matchAmt,
-		MismatchAmount: mismatchAmt,
-		TotalUnits:     totalUnits,
-		PaidTolls:      paidTolls,
+		MatchAmount:       matchAmt,
+		MismatchAmount:    mismatchAmt,
+		UnconfirmedAmount: unconfirmedAmt,
+		TotalUnits:        totalUnits,
+		PaidTolls:         paidTolls,
 	}
+	// Percentages are each bucket's share of match+mismatch only —
+	// unconfirmed amounts are real dollars (shown separately) but
+	// deliberately excluded from a percentage that's meant to represent
+	// proven accuracy, not "we don't know yet".
 	total := matchAmt + mismatchAmt
 	if total > 0 {
 		resp.MatchPct = (matchAmt / total) * 100
@@ -181,7 +200,7 @@ func (r *OverviewRepository) GetCostOverview(ctx context.Context, f models.Filte
 func (r *OverviewRepository) GetCostOverviewByCostCenter(ctx context.Context, f models.Filters) (models.CostOverviewByCostCenterResponse, error) {
 	filter := buildFilter(f)
 
-	matchAmt, mismatchAmt, err := r.matchMismatchAmounts(ctx, filter)
+	matchAmt, mismatchAmt, unconfirmedAmt, err := r.matchMismatchAmounts(ctx, filter)
 	if err != nil {
 		return models.CostOverviewByCostCenterResponse{}, err
 	}
@@ -241,7 +260,7 @@ func (r *OverviewRepository) GetCostOverviewByCostCenter(ctx context.Context, f 
 	}
 
 	resp := models.CostOverviewByCostCenterResponse{
-		MatchAmount: matchAmt, MismatchAmount: mismatchAmt,
+		MatchAmount: matchAmt, MismatchAmount: mismatchAmt, UnconfirmedAmount: unconfirmedAmt,
 		Rows: rows, TotalUnits: totalUnits, PaidTolls: paidTolls,
 	}
 	total := matchAmt + mismatchAmt
@@ -259,9 +278,10 @@ func (r *OverviewRepository) GetInvoiceOverview(ctx context.Context, f models.Fi
 	pipeline := mongo.Pipeline{
 		{{Key: "$match", Value: filter}},
 		{{Key: "$group", Value: bson.M{
-			"_id":           nil,
-			"matchCount":    bson.M{"$sum": bson.M{"$cond": bson.A{isMismatchCond, 0, 1}}},
-			"mismatchCount": bson.M{"$sum": bson.M{"$cond": bson.A{isMismatchCond, 1, 0}}},
+			"_id":              nil,
+			"matchCount":       bson.M{"$sum": bson.M{"$cond": bson.A{bson.M{"$eq": bson.A{"$verdict", "matched"}}, 1, 0}}},
+			"mismatchCount":    bson.M{"$sum": bson.M{"$cond": bson.A{isMismatchCond, 1, 0}}},
+			"unconfirmedCount": bson.M{"$sum": bson.M{"$cond": bson.A{isUnconfirmedCond, 1, 0}}},
 		}}},
 	}
 
@@ -272,8 +292,9 @@ func (r *OverviewRepository) GetInvoiceOverview(ctx context.Context, f models.Fi
 	defer cursor.Close(ctx)
 
 	var results []struct {
-		MatchCount    int64 `bson:"matchCount"`
-		MismatchCount int64 `bson:"mismatchCount"`
+		MatchCount       int64 `bson:"matchCount"`
+		MismatchCount    int64 `bson:"mismatchCount"`
+		UnconfirmedCount int64 `bson:"unconfirmedCount"`
 	}
 	if err := cursor.All(ctx, &results); err != nil {
 		return models.InvoiceOverviewResponse{}, err
@@ -283,11 +304,13 @@ func (r *OverviewRepository) GetInvoiceOverview(ctx context.Context, f models.Fi
 	if len(results) > 0 {
 		resp.MatchCount = results[0].MatchCount
 		resp.MismatchCount = results[0].MismatchCount
+		resp.UnconfirmedCount = results[0].UnconfirmedCount
 	}
-	resp.TotalInvoices = resp.MatchCount + resp.MismatchCount
-	if resp.TotalInvoices > 0 {
-		resp.MatchPct = (float64(resp.MatchCount) / float64(resp.TotalInvoices)) * 100
-		resp.MismatchPct = (float64(resp.MismatchCount) / float64(resp.TotalInvoices)) * 100
+	resp.TotalInvoices = resp.MatchCount + resp.MismatchCount + resp.UnconfirmedCount
+	matchMismatchTotal := resp.MatchCount + resp.MismatchCount
+	if matchMismatchTotal > 0 {
+		resp.MatchPct = (float64(resp.MatchCount) / float64(matchMismatchTotal)) * 100
+		resp.MismatchPct = (float64(resp.MismatchCount) / float64(matchMismatchTotal)) * 100
 	}
 	return resp, nil
 }

@@ -21,6 +21,9 @@ class RouteTripService:
         all_trips = []
         all_gaps = []  
 
+        if stats:
+            stats.units = len(grouped)
+
         for unit, records in grouped.items():
             segments, gaps = self.segmenter.process(unit=unit, records=records, stats=stats)
 
