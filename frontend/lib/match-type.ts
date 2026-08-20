@@ -1,9 +1,9 @@
-import type { MatchType } from "@/types";
+import type { Mismatch } from "@/types";
 
 export function getMatchTypeLabel(
-  type: MatchType
+  type: Mismatch
 ): string {
-  switch (type) {
+  switch (type.verdict) {
     case "matched":
       return "Matched";
 
