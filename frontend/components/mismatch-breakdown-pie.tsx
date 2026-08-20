@@ -23,7 +23,7 @@ const COLORS: Record<string, string> = {
 function labelFor(type: string): string {
   return type
     .split("_")
-    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .map((w) => w[0]?.toUpperCase() + w.slice(1))
     .join(" ");
 }
 
