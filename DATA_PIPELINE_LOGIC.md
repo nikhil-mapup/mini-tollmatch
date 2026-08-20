@@ -101,15 +101,6 @@ The pipeline starts in `pipeline/main.py`.
 Runtime secrets and service URLs belong in `.env` or exported shell variables.
 The pipeline reads `.env` from the project root through `python-dotenv`.
 
-Pipeline `.env` keys:
-
-```env
-MONGO_URI=mongodb+srv://USER:PASSWORD@HOST/DATABASE?retryWrites=true&w=majority
-DATABASE_NAME=tollmatch
-TOLLMATCH_API_URL=https://example-toll-api-host
-TOLLMATCH_API_KEY=replace_with_real_api_key
-```
-
 Backend and frontend env values are documented in `readme.md`.
 
 Current pipeline thresholds live in `pipeline/config/config.py`:
